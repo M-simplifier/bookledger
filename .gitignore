@@ -1,0 +1,8 @@
+dist-newstyle/
+*.sqlite
+*.sqlite-*
+*.db
+data/
+backups/
+config.toml
+.env

@@ -1,0 +1,4 @@
+db_path = "~/.local/share/bookledger/books.sqlite"
+backup_dir = "~/BookLedgerBackups"
+keep_snapshots = 30
+backup_after_write = true

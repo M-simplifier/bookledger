@@ -1,0 +1,55 @@
+cabal-version: 3.4
+name: bookledger
+version: 0.1.0.0
+license: MIT
+license-file: LICENSE
+author: Masaya Shirasawa
+maintainer: masaya@example.com
+synopsis: Small local-first book ledger
+description: A minimal SQLite-backed book ledger with a CLI, local web UI, and snapshot backups.
+category: Tools
+build-type: Simple
+extra-source-files:
+  README.md
+  schema.sql
+  example-config.toml
+data-files:
+  static/index.html
+  static/app.js
+  static/style.css
+
+common warnings
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wpartial-fields -Wredundant-constraints
+
+executable books
+  import: warnings
+  ghc-options: -threaded
+  main-is: Main.hs
+  hs-source-dirs:
+    app
+    src
+  other-modules:
+    BookLedger.Actions
+    BookLedger.Backup
+    BookLedger.Config
+    BookLedger.Domain
+    BookLedger.Store
+    BookLedger.Web
+    Paths_bookledger
+  autogen-modules:
+    Paths_bookledger
+  build-depends:
+    aeson >= 2.0 && < 2.3,
+    base >= 4.18 && < 4.20,
+    bytestring >= 0.11 && < 0.13,
+    directory >= 1.3 && < 1.4,
+    filepath >= 1.4 && < 1.6,
+    http-types >= 0.12 && < 0.13,
+    optparse-applicative >= 0.18 && < 0.20,
+    process >= 1.6 && < 1.7,
+    sqlite-simple >= 0.4 && < 0.5,
+    text >= 2.0 && < 2.2,
+    time >= 1.12 && < 1.13,
+    wai >= 3.2 && < 3.3,
+    warp >= 3.3 && < 3.5
+  default-language: GHC2021
