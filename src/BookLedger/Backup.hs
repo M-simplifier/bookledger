@@ -26,7 +26,7 @@ import System.Directory
   )
 import System.FilePath ((</>), takeExtension)
 import System.Exit (ExitCode(..))
-import System.Process (callProcess, readProcess, readProcessWithExitCode)
+import System.Process (readProcess, readProcessWithExitCode)
 
 data BackupResult = BackupResult
   { backupLatestPath :: FilePath
@@ -82,22 +82,35 @@ copySnapshotWindows cfg timestamp source = do
         [ "param([string]$src, [string]$dir, [string]$ts, [int]$keep)"
         , "$ErrorActionPreference = 'Stop'"
         , "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8"
-        , "$snapDir = Join-Path $dir 'snapshots'"
-        , "New-Item -ItemType Directory -Force -Path $snapDir | Out-Null"
-        , "$latest = Join-Path $dir 'latest.sqlite'"
-        , "$latestTmp = Join-Path $dir 'latest.sqlite.tmp'"
-        , "$snapshot = Join-Path $snapDir (\"books-$ts.sqlite\")"
-        , "$snapshotTmp = \"$snapshot.tmp\""
-        , "Copy-Item -LiteralPath $src -Destination $latestTmp -Force"
-        , "Move-Item -LiteralPath $latestTmp -Destination $latest -Force"
-        , "Copy-Item -LiteralPath $src -Destination $snapshotTmp -Force"
-        , "Move-Item -LiteralPath $snapshotTmp -Destination $snapshot -Force"
-        , "Get-ChildItem -LiteralPath $snapDir -Filter 'books-*.sqlite' | Sort-Object Name -Descending | Select-Object -Skip $keep | Remove-Item -Force"
+        , "try {"
+        , "  $drive = Split-Path -Qualifier $dir"
+        , "  if ($drive -and -not (Test-Path -LiteralPath $drive)) {"
+        , "    throw \"BookLedger backup drive is not available: $drive. Start the drive provider or update backup_dir in ~/.config/bookledger/config.toml.\""
+        , "  }"
+        , "  $snapDir = Join-Path $dir 'snapshots'"
+        , "  New-Item -ItemType Directory -Force -Path $snapDir | Out-Null"
+        , "  $latest = Join-Path $dir 'latest.sqlite'"
+        , "  $latestTmp = Join-Path $dir 'latest.sqlite.tmp'"
+        , "  $snapshot = Join-Path $snapDir (\"books-$ts.sqlite\")"
+        , "  $snapshotTmp = \"$snapshot.tmp\""
+        , "  Copy-Item -LiteralPath $src -Destination $latestTmp -Force"
+        , "  Move-Item -LiteralPath $latestTmp -Destination $latest -Force"
+        , "  Copy-Item -LiteralPath $src -Destination $snapshotTmp -Force"
+        , "  Move-Item -LiteralPath $snapshotTmp -Destination $snapshot -Force"
+        , "  Get-ChildItem -LiteralPath $snapDir -Filter 'books-*.sqlite' | Sort-Object Name -Descending | Select-Object -Skip $keep | Remove-Item -Force"
+        , "} catch {"
+        , "  [Console]::Error.WriteLine($_.Exception.Message)"
+        , "  exit 1"
+        , "}"
         ]
-  withPowerShellScript "bookledger-backup" script $ \winScript ->
-    callProcess
+  (code, _out, err) <- withPowerShellScript "bookledger-backup" script $ \winScript ->
+    readProcessWithExitCode
       "powershell.exe"
       ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winScript, winSource, backupDir, timestamp, show (cfgKeepSnapshots cfg)]
+      ""
+  case code of
+    ExitSuccess -> pure ()
+    ExitFailure _ -> ioError (userError ("PowerShell backup failed: " <> trimNewline err))
   pure BackupResult
     { backupLatestPath = backupDir <> "\\latest.sqlite"
     , backupSnapshotPath = backupDir <> "\\snapshots\\books-" <> timestamp <> ".sqlite"
@@ -123,9 +136,18 @@ listBackupsWindows cfg = do
         [ "param([string]$backupDir)"
         , "$ErrorActionPreference = 'Stop'"
         , "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8"
-        , "$dir = Join-Path $backupDir 'snapshots'"
-        , "if (Test-Path -LiteralPath $dir) {"
-        , "  Get-ChildItem -LiteralPath $dir -Filter 'books-*.sqlite' | Sort-Object Name -Descending | ForEach-Object { $_.FullName }"
+        , "try {"
+        , "  $drive = Split-Path -Qualifier $backupDir"
+        , "  if ($drive -and -not (Test-Path -LiteralPath $drive)) {"
+        , "    throw \"BookLedger backup drive is not available: $drive. Start the drive provider or update backup_dir in ~/.config/bookledger/config.toml.\""
+        , "  }"
+        , "  $dir = Join-Path $backupDir 'snapshots'"
+        , "  if (Test-Path -LiteralPath $dir) {"
+        , "    Get-ChildItem -LiteralPath $dir -Filter 'books-*.sqlite' | Sort-Object Name -Descending | ForEach-Object { $_.FullName }"
+        , "  }"
+        , "} catch {"
+        , "  [Console]::Error.WriteLine($_.Exception.Message)"
+        , "  exit 1"
         , "}"
         ]
   (code, out, err) <- withPowerShellScript "bookledger-list-backups" script $ \winScript ->
@@ -135,7 +157,7 @@ listBackupsWindows cfg = do
       ""
   case code of
     ExitSuccess -> pure (lines out)
-    ExitFailure _ -> ioError (userError ("PowerShell backup listing failed: " <> err))
+    ExitFailure _ -> ioError (userError ("PowerShell backup listing failed: " <> trimNewline err))
 
 atomicCopy :: FilePath -> FilePath -> IO ()
 atomicCopy source target = do
