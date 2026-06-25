@@ -30,6 +30,8 @@ Initial categories are `未分類`, `小説`, `専門書`, and `一般書`.
 Statuses are `planned`, `unread`, `reading`, `finished`, and `disposed`.
 Books can store an optional `url`; in the web UI, titles with URLs open that
 link.
+Backups write `latest.sqlite`, timestamped SQLite snapshots, and refreshed
+`latest.csv` / `latest.html` read-only exports in the backup directory.
 
 Config is read from `~/.config/bookledger/config.toml`.
 See `example-config.toml` for the SQLite and backup paths.

@@ -7,12 +7,16 @@ module BookLedger.Backup
   ) where
 
 import BookLedger.Config
+import BookLedger.Domain
+import BookLedger.Export
 import qualified BookLedger.Store as Store
 import Control.Exception (bracket)
 import Control.Monad (forM_, when)
 import qualified Data.ByteString as BS
 import Data.List (sortOn)
 import Data.Ord (Down(..))
+import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Database.SQLite.Simple (close)
 import System.Directory
@@ -31,6 +35,8 @@ import System.Process (readProcess, readProcessWithExitCode)
 data BackupResult = BackupResult
   { backupLatestPath :: FilePath
   , backupSnapshotPath :: FilePath
+  , backupCsvPath :: FilePath
+  , backupHtmlPath :: FilePath
   } deriving (Eq, Show)
 
 backupNow :: Config -> IO BackupResult
@@ -42,44 +48,73 @@ backupNow cfg = do
           <> take 6 (formatTime defaultTimeLocale "%q" now)
   tempDir <- getTemporaryDirectory
   let tempSnapshot = tempDir </> ("bookledger-" <> timestamp <> ".sqlite")
+      tempCsv = tempDir </> ("bookledger-" <> timestamp <> ".csv")
+      tempHtml = tempDir </> ("bookledger-" <> timestamp <> ".html")
   removeIfExists tempSnapshot
+  removeIfExists tempCsv
+  removeIfExists tempHtml
   bracket (Store.openDb (cfgDbPath cfg)) close $ \conn -> do
+    Store.initDb conn
     Store.integrityCheck conn
     Store.vacuumInto conn tempSnapshot
   bracket (Store.openDb tempSnapshot) close Store.integrityCheck
+  books <- booksFromSnapshot tempSnapshot
+  writeUtf8File tempCsv (renderCsv books)
+  writeUtf8File tempHtml (renderHtml books)
   result <-
     if isWindowsDrivePath (cfgBackupDir cfg)
-      then copySnapshotWindows cfg timestamp tempSnapshot
-      else copySnapshotLocal cfg timestamp tempSnapshot
+      then copySnapshotWindows cfg timestamp tempSnapshot tempCsv tempHtml
+      else copySnapshotLocal cfg timestamp tempSnapshot tempCsv tempHtml
   removeIfExists tempSnapshot
+  removeIfExists tempCsv
+  removeIfExists tempHtml
   pure result
+
+booksFromSnapshot :: FilePath -> IO [Book]
+booksFromSnapshot path =
+  bracket (Store.openDb path) close $ \conn ->
+    Store.listBooks conn BookFilter
+      { filterStatus = Nothing
+      , filterCategory = Nothing
+      , filterSeries = Nothing
+      , filterSearch = Nothing
+      , filterSort = SortCatalog
+      }
 
 listBackups :: Config -> IO [FilePath]
 listBackups cfg
   | isWindowsDrivePath (cfgBackupDir cfg) = listBackupsWindows cfg
   | otherwise = listBackupsLocal cfg
 
-copySnapshotLocal :: Config -> String -> FilePath -> IO BackupResult
-copySnapshotLocal cfg timestamp source = do
+copySnapshotLocal :: Config -> String -> FilePath -> FilePath -> FilePath -> IO BackupResult
+copySnapshotLocal cfg timestamp source csvSource htmlSource = do
   let backupDir = cfgBackupDir cfg
       snapshotDir = backupDir </> "snapshots"
       latestPath = backupDir </> "latest.sqlite"
+      csvPath = backupDir </> "latest.csv"
+      htmlPath = backupDir </> "latest.html"
       snapshotPath = snapshotDir </> ("books-" <> timestamp <> ".sqlite")
   createDirectoryIfMissing True snapshotDir
   atomicCopy source latestPath
+  atomicCopy csvSource csvPath
+  atomicCopy htmlSource htmlPath
   atomicCopy source snapshotPath
   pruneLocal snapshotDir (cfgKeepSnapshots cfg)
   pure BackupResult
     { backupLatestPath = latestPath
     , backupSnapshotPath = snapshotPath
+    , backupCsvPath = csvPath
+    , backupHtmlPath = htmlPath
     }
 
-copySnapshotWindows :: Config -> String -> FilePath -> IO BackupResult
-copySnapshotWindows cfg timestamp source = do
+copySnapshotWindows :: Config -> String -> FilePath -> FilePath -> FilePath -> IO BackupResult
+copySnapshotWindows cfg timestamp source csvSource htmlSource = do
   winSource <- wslPathToWindows source
+  winCsvSource <- wslPathToWindows csvSource
+  winHtmlSource <- wslPathToWindows htmlSource
   let backupDir = cfgBackupDir cfg
       script = unlines
-        [ "param([string]$src, [string]$dir, [string]$ts, [int]$keep)"
+        [ "param([string]$src, [string]$csv, [string]$html, [string]$dir, [string]$ts, [int]$keep)"
         , "$ErrorActionPreference = 'Stop'"
         , "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8"
         , "try {"
@@ -91,10 +126,18 @@ copySnapshotWindows cfg timestamp source = do
         , "  New-Item -ItemType Directory -Force -Path $snapDir | Out-Null"
         , "  $latest = Join-Path $dir 'latest.sqlite'"
         , "  $latestTmp = Join-Path $dir 'latest.sqlite.tmp'"
+        , "  $latestCsv = Join-Path $dir 'latest.csv'"
+        , "  $latestCsvTmp = Join-Path $dir 'latest.csv.tmp'"
+        , "  $latestHtml = Join-Path $dir 'latest.html'"
+        , "  $latestHtmlTmp = Join-Path $dir 'latest.html.tmp'"
         , "  $snapshot = Join-Path $snapDir (\"books-$ts.sqlite\")"
         , "  $snapshotTmp = \"$snapshot.tmp\""
         , "  Copy-Item -LiteralPath $src -Destination $latestTmp -Force"
         , "  Move-Item -LiteralPath $latestTmp -Destination $latest -Force"
+        , "  Copy-Item -LiteralPath $csv -Destination $latestCsvTmp -Force"
+        , "  Move-Item -LiteralPath $latestCsvTmp -Destination $latestCsv -Force"
+        , "  Copy-Item -LiteralPath $html -Destination $latestHtmlTmp -Force"
+        , "  Move-Item -LiteralPath $latestHtmlTmp -Destination $latestHtml -Force"
         , "  Copy-Item -LiteralPath $src -Destination $snapshotTmp -Force"
         , "  Move-Item -LiteralPath $snapshotTmp -Destination $snapshot -Force"
         , "  Get-ChildItem -LiteralPath $snapDir -Filter 'books-*.sqlite' | Sort-Object Name -Descending | Select-Object -Skip $keep | Remove-Item -Force"
@@ -106,7 +149,7 @@ copySnapshotWindows cfg timestamp source = do
   (code, _out, err) <- withPowerShellScript "bookledger-backup" script $ \winScript ->
     readProcessWithExitCode
       "powershell.exe"
-      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winScript, winSource, backupDir, timestamp, show (cfgKeepSnapshots cfg)]
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", winScript, winSource, winCsvSource, winHtmlSource, backupDir, timestamp, show (cfgKeepSnapshots cfg)]
       ""
   case code of
     ExitSuccess -> pure ()
@@ -114,6 +157,8 @@ copySnapshotWindows cfg timestamp source = do
   pure BackupResult
     { backupLatestPath = backupDir <> "\\latest.sqlite"
     , backupSnapshotPath = backupDir <> "\\snapshots\\books-" <> timestamp <> ".sqlite"
+    , backupCsvPath = backupDir <> "\\latest.csv"
+    , backupHtmlPath = backupDir <> "\\latest.html"
     }
 
 listBackupsLocal :: Config -> IO [FilePath]
@@ -171,6 +216,10 @@ writeCopy :: FilePath -> FilePath -> IO ()
 writeCopy source target = do
   bytes <- BS.readFile source
   BS.writeFile target bytes
+
+writeUtf8File :: FilePath -> Text -> IO ()
+writeUtf8File path =
+  BS.writeFile path . TE.encodeUtf8
 
 pruneLocal :: FilePath -> Int -> IO ()
 pruneLocal snapshotDir keep = do

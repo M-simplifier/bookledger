@@ -91,6 +91,8 @@ runCommand cfg selectedCommand =
       result <- backupAction cfg
       putStrLn ("latest: " <> backupLatestPath result)
       putStrLn ("snapshot: " <> backupSnapshotPath result)
+      putStrLn ("csv: " <> backupCsvPath result)
+      putStrLn ("html: " <> backupHtmlPath result)
     Backups ->
       listBackups cfg >>= mapM_ putStrLn
     Web port ->

@@ -33,6 +33,7 @@ executable books
     BookLedger.Backup
     BookLedger.Config
     BookLedger.Domain
+    BookLedger.Export
     BookLedger.Store
     BookLedger.Web
     Paths_bookledger
