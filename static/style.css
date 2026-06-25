@@ -92,7 +92,7 @@ p {
 
 .grid {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 280px 1fr;
   gap: 14px;
   align-items: start;
 }
@@ -127,7 +127,36 @@ p {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 900px;
+  min-width: 940px;
+  table-layout: fixed;
+}
+
+.col-title {
+  width: 27%;
+}
+
+.col-author {
+  width: 16%;
+}
+
+.col-status {
+  width: 14%;
+}
+
+.col-category {
+  width: 16%;
+}
+
+.col-series {
+  width: 10%;
+}
+
+.col-volume {
+  width: 5%;
+}
+
+.col-memo {
+  width: 12%;
 }
 
 th,
@@ -136,6 +165,7 @@ td {
   padding: 9px 10px;
   text-align: left;
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 th {
@@ -162,7 +192,6 @@ td.title a:hover {
 
 td.memo {
   color: var(--muted);
-  max-width: 260px;
   white-space: pre-wrap;
 }
 

@@ -60,11 +60,10 @@ function renderBooks() {
   $("books").replaceChildren(...state.books.map(book => {
     const tr = document.createElement("tr");
     tr.append(
-      cell(`#${book.id}`),
       titleCell(book),
       cell(book.author),
       statusCell(book),
-      cell(book.category),
+      cell(book.category, "category"),
       cell(book.series || ""),
       cell(book.volumeNo ?? ""),
       cell(book.memo || "", "memo")
