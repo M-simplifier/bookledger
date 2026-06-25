@@ -17,7 +17,8 @@ module BookLedger.Store
   ) where
 
 import BookLedger.Domain
-import Control.Exception (throwIO)
+import Control.Exception (finally, throwIO)
+import Control.Monad (unless)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -37,10 +38,45 @@ initDb conn = do
   execute_ conn "PRAGMA foreign_keys = ON"
   execute_ conn "CREATE TABLE IF NOT EXISTS categories (name TEXT PRIMARY KEY)"
   execute_ conn "CREATE TABLE IF NOT EXISTS series (title TEXT PRIMARY KEY)"
-  execute_ conn "CREATE TABLE IF NOT EXISTS books (id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'finished', 'disposed')), category TEXT NOT NULL REFERENCES categories(name) ON UPDATE CASCADE, series TEXT REFERENCES series(title) ON UPDATE CASCADE, volume_no REAL, memo TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-  execute_ conn "CREATE UNIQUE INDEX IF NOT EXISTS books_identity_idx ON books (title, author, COALESCE(series, ''), COALESCE(volume_no, -1))"
+  createBooksTable conn
+  migrateBooksTable conn
+  createBooksIdentityIndex conn
   mapM_ (execute conn "INSERT OR IGNORE INTO categories (name) VALUES (?)" . Only)
     (["未分類", "小説", "専門書", "一般書"] :: [Text])
+
+createBooksTable :: Connection -> IO ()
+createBooksTable conn =
+  execute_ conn "CREATE TABLE IF NOT EXISTS books (id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('planned', 'unread', 'reading', 'finished', 'disposed')), category TEXT NOT NULL REFERENCES categories(name) ON UPDATE CASCADE, series TEXT REFERENCES series(title) ON UPDATE CASCADE, volume_no REAL, memo TEXT NOT NULL DEFAULT '', url TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+
+createBooksIdentityIndex :: Connection -> IO ()
+createBooksIdentityIndex conn =
+  execute_ conn "CREATE UNIQUE INDEX IF NOT EXISTS books_identity_idx ON books (title, author, COALESCE(series, ''), COALESCE(volume_no, -1))"
+
+migrateBooksTable :: Connection -> IO ()
+migrateBooksTable conn = do
+  columns <- bookColumns conn
+  schemaRows <- query_ conn "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'books'" :: IO [Only Text]
+  let hasUrl = "url" `elem` columns
+      acceptsPlanned = any (\(Only sql) -> "'planned'" `T.isInfixOf` sql) schemaRows
+  unless (hasUrl && acceptsPlanned) $
+    ( do
+        execute_ conn "PRAGMA foreign_keys = OFF"
+        withTransaction conn $ do
+          execute_ conn "DROP INDEX IF EXISTS books_identity_idx"
+          execute_ conn "ALTER TABLE books RENAME TO books_old"
+          createBooksTable conn
+          if hasUrl
+            then execute_ conn "INSERT INTO books (id, title, author, status, category, series, volume_no, memo, url, created_at, updated_at) SELECT id, title, author, status, category, series, volume_no, memo, url, created_at, updated_at FROM books_old"
+            else execute_ conn "INSERT INTO books (id, title, author, status, category, series, volume_no, memo, url, created_at, updated_at) SELECT id, title, author, status, category, series, volume_no, memo, NULL, created_at, updated_at FROM books_old"
+          execute_ conn "DROP TABLE books_old"
+          createBooksIdentityIndex conn
+    )
+      `finally` execute_ conn "PRAGMA foreign_keys = ON"
+
+bookColumns :: Connection -> IO [Text]
+bookColumns conn = do
+  rows <- query_ conn "PRAGMA table_info(books)" :: IO [(Int, Text, Text, Int, Maybe Text, Int)]
+  pure [name | (_, name, _, _, _, _) <- rows]
 
 addCategory :: Connection -> Text -> IO ()
 addCategory conn name =
@@ -73,7 +109,7 @@ insertBook conn book = do
   ensureCategory conn (newCategory book)
   mapM_ (ensureSeries conn) (newSeries book)
   execute conn
-    "INSERT INTO books (title, author, status, category, series, volume_no, memo) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO books (title, author, status, category, series, volume_no, memo, url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     ( T.strip (newTitle book)
     , T.strip (newAuthor book)
     , statusText (newStatus book)
@@ -81,6 +117,7 @@ insertBook conn book = do
     , newSeries book
     , newVolumeNo book
     , newMemo book
+    , newUrl book
     )
   fromIntegral <$> lastInsertRowId conn
 
@@ -107,13 +144,20 @@ listBooks conn filters =
       then ""
       else " WHERE " <> T.intercalate " AND " clauses
   sql =
-    "SELECT id, title, author, status, category, series, volume_no, memo, created_at, updated_at FROM books"
+    "SELECT id, title, author, status, category, series, volume_no, memo, url, created_at, updated_at FROM books"
       <> whereSql
-      <> " ORDER BY category, COALESCE(series, title), COALESCE(volume_no, 0), title"
+      <> orderSql (filterSort filters)
   searchClause value =
     ( "(title LIKE ? OR author LIKE ? OR memo LIKE ?)"
     , replicate 3 (SQLText ("%" <> value <> "%"))
     )
+  orderSql sort =
+    case sort of
+      SortActive -> " ORDER BY CASE status WHEN 'reading' THEN 0 WHEN 'unread' THEN 1 WHEN 'planned' THEN 2 WHEN 'finished' THEN 3 WHEN 'disposed' THEN 4 ELSE 5 END, updated_at DESC, id DESC"
+      SortUpdated -> " ORDER BY updated_at DESC, id DESC"
+      SortCatalog -> catalogOrderSql
+  catalogOrderSql =
+    " ORDER BY category, COALESCE(series, title), COALESCE(volume_no, 0), title"
 
 integrityCheck :: Connection -> IO ()
 integrityCheck conn = do
@@ -152,6 +196,7 @@ instance FromRow BookRow where
     seriesTitle <- field
     volumeNo <- field
     memo <- field
+    url <- field
     createdAt <- field
     updatedAt <- field
     let status =
@@ -167,6 +212,7 @@ instance FromRow BookRow where
       , bookSeries = seriesTitle
       , bookVolumeNo = volumeNo
       , bookMemo = memo
+      , bookUrl = url
       , bookCreatedAt = createdAt
       , bookUpdatedAt = updatedAt
       })

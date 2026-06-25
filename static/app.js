@@ -23,7 +23,9 @@ async function loadMeta() {
   fillSelect($("category"), [{ value: "", label: "すべてのカテゴリ" }, ...state.meta.categories.map(name => ({ value: name, label: name }))]);
   fillSelect($("series"), [{ value: "", label: "すべてのシリーズ" }, ...state.meta.series.map(name => ({ value: name, label: name }))]);
 
-  fillSelect(document.querySelector('[name="status"]'), state.meta.statuses);
+  const addStatus = document.querySelector('[name="status"]');
+  fillSelect(addStatus, state.meta.statuses);
+  addStatus.value = "unread";
   fillSelect(document.querySelector('[name="category"]'), state.meta.categories.map(name => ({ value: name, label: name })));
   fillSelect(document.querySelector('[name="series"]'), [{ value: "", label: "なし" }, ...state.meta.series.map(name => ({ value: name, label: name }))]);
 }
@@ -48,6 +50,7 @@ async function loadBooks() {
   if ($("status").value) params.set("status", $("status").value);
   if ($("category").value) params.set("category", $("category").value);
   if ($("series").value) params.set("series", $("series").value);
+  params.set("sort", $("sort").value);
   state.books = await api(`/api/books?${params.toString()}`);
   renderBooks();
 }
@@ -58,7 +61,7 @@ function renderBooks() {
     const tr = document.createElement("tr");
     tr.append(
       cell(`#${book.id}`),
-      cell(book.title, "title"),
+      titleCell(book),
       cell(book.author),
       statusCell(book),
       cell(book.category),
@@ -74,6 +77,22 @@ function cell(text, className = "") {
   const td = document.createElement("td");
   td.textContent = text;
   if (className) td.className = className;
+  return td;
+}
+
+function titleCell(book) {
+  const td = document.createElement("td");
+  td.className = "title";
+  if (book.url) {
+    const link = document.createElement("a");
+    link.href = book.url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = book.title;
+    td.append(link);
+  } else {
+    td.textContent = book.title;
+  }
   return td;
 }
 
@@ -109,11 +128,13 @@ async function addBook(event) {
     category: data.category,
     series: data.series || null,
     volumeNo: data.volumeNo ? Number(data.volumeNo) : null,
-    memo: data.memo || ""
+    memo: data.memo || "",
+    url: data.url || null
   };
   try {
     await api("/api/books", { method: "POST", body: JSON.stringify(payload) });
     form.reset();
+    form.elements.status.value = "unread";
     $("form-message").textContent = "";
     await loadMeta();
     await loadBooks();
@@ -145,7 +166,7 @@ async function boot() {
   await loadBooks();
   $("refresh").addEventListener("click", loadBooks);
   $("search").addEventListener("input", debounce(loadBooks, 180));
-  for (const id of ["status", "category", "series"]) {
+  for (const id of ["sort", "status", "category", "series"]) {
     $(id).addEventListener("change", loadBooks);
   }
   $("add-book").addEventListener("submit", addBook);

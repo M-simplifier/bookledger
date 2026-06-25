@@ -18,6 +18,11 @@
 
     <section class="toolbar" aria-label="filters">
       <input id="search" type="search" placeholder="タイトル・著者・メモを検索">
+      <select id="sort" aria-label="並び順">
+        <option value="active">状態順</option>
+        <option value="updated">更新順</option>
+        <option value="catalog">目録順</option>
+      </select>
       <select id="status"></select>
       <select id="category"></select>
       <select id="series"></select>
@@ -27,6 +32,7 @@
       <form id="add-book" class="panel">
         <h2>追加</h2>
         <label>タイトル<input name="title" required></label>
+        <label>URL<input name="url" type="url"></label>
         <label>著者<input name="author" required></label>
         <label>状態<select name="status" required></select></label>
         <label>カテゴリ<select name="category" required></select></label>

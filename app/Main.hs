@@ -34,6 +34,7 @@ data AddOptions = AddOptions
   , addSeries :: Maybe String
   , addVolume :: Maybe Double
   , addMemo :: String
+  , addUrl :: Maybe String
   }
 
 data ListOptions = ListOptions
@@ -126,6 +127,7 @@ addOptions =
     <*> optional (strOption (long "series" <> metavar "SERIES"))
     <*> optional (option auto (long "volume" <> metavar "NUMBER"))
     <*> strOption (long "memo" <> value "" <> metavar "TEXT")
+    <*> optional (strOption (long "url" <> metavar "URL"))
 
 listOptions :: Parser ListOptions
 listOptions =
@@ -176,6 +178,7 @@ newBookFromOptions opts =
     , newSeries = T.pack <$> addSeries opts
     , newVolumeNo = addVolume opts
     , newMemo = T.pack (addMemo opts)
+    , newUrl = T.pack <$> addUrl opts
     }
 
 filterFromOptions :: ListOptions -> BookFilter
@@ -185,6 +188,7 @@ filterFromOptions opts =
     , filterCategory = T.pack <$> listCategory opts
     , filterSeries = T.pack <$> listSeries opts
     , filterSearch = T.pack <$> listSearch opts
+    , filterSort = SortCatalog
     }
 
 printBook :: Book -> IO ()

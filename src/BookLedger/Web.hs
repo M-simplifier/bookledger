@@ -12,6 +12,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (void)
 import Data.Aeson (FromJSON(..), eitherDecode, encode, object, withObject, (.:), (.=))
 import qualified Data.ByteString.Lazy as LBS
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
@@ -120,6 +121,7 @@ filterFromRequest req =
     , filterCategory = queryText "category"
     , filterSeries = queryText "series"
     , filterSearch = queryText "q"
+    , filterSort = fromMaybe SortActive (queryText "sort" >>= parseBookSort)
     }
  where
   queryText key = do

@@ -7,6 +7,8 @@ module BookLedger.Domain
   , parseStatus
   , statusText
   , statusLabel
+  , BookSort(..)
+  , parseBookSort
   , Book(..)
   , NewBook(..)
   , BookFilter(..)
@@ -18,18 +20,20 @@ import qualified Data.Text as T
 import GHC.Generics (Generic)
 
 data Status
-  = Unread
+  = Planned
+  | Unread
   | Reading
   | Finished
   | Disposed
   deriving (Eq, Ord, Show, Read, Enum, Bounded, Generic)
 
 allStatuses :: [Status]
-allStatuses = [minBound .. maxBound]
+allStatuses = [Planned, Unread, Reading, Finished, Disposed]
 
 statusText :: Status -> Text
 statusText status =
   case status of
+    Planned -> "planned"
     Unread -> "unread"
     Reading -> "reading"
     Finished -> "finished"
@@ -38,6 +42,7 @@ statusText status =
 statusLabel :: Status -> Text
 statusLabel status =
   case status of
+    Planned -> "購入予定"
     Unread -> "未読"
     Reading -> "読書中"
     Finished -> "読了"
@@ -46,10 +51,12 @@ statusLabel status =
 parseStatus :: Text -> Maybe Status
 parseStatus value =
   case T.toLower (T.strip value) of
+    "planned" -> Just Planned
     "unread" -> Just Unread
     "reading" -> Just Reading
     "finished" -> Just Finished
     "disposed" -> Just Disposed
+    "購入予定" -> Just Planned
     "未読" -> Just Unread
     "読書中" -> Just Reading
     "読了" -> Just Finished
@@ -63,6 +70,20 @@ instance FromJSON Status where
   parseJSON = withText "Status" $ \value ->
     maybe (fail ("unknown status: " <> T.unpack value)) pure (parseStatus value)
 
+data BookSort
+  = SortActive
+  | SortUpdated
+  | SortCatalog
+  deriving (Eq, Show, Read, Generic)
+
+parseBookSort :: Text -> Maybe BookSort
+parseBookSort value =
+  case T.toLower (T.strip value) of
+    "active" -> Just SortActive
+    "updated" -> Just SortUpdated
+    "catalog" -> Just SortCatalog
+    _ -> Nothing
+
 data Book = Book
   { bookId :: Int
   , bookTitle :: Text
@@ -72,6 +93,7 @@ data Book = Book
   , bookSeries :: Maybe Text
   , bookVolumeNo :: Maybe Double
   , bookMemo :: Text
+  , bookUrl :: Maybe Text
   , bookCreatedAt :: Text
   , bookUpdatedAt :: Text
   } deriving (Eq, Show, Generic)
@@ -87,6 +109,7 @@ instance ToJSON Book where
     , "series" .= bookSeries book
     , "volumeNo" .= bookVolumeNo book
     , "memo" .= bookMemo book
+    , "url" .= bookUrl book
     , "createdAt" .= bookCreatedAt book
     , "updatedAt" .= bookUpdatedAt book
     ]
@@ -99,6 +122,7 @@ data NewBook = NewBook
   , newSeries :: Maybe Text
   , newVolumeNo :: Maybe Double
   , newMemo :: Text
+  , newUrl :: Maybe Text
   } deriving (Eq, Show, Generic)
 
 instance FromJSON NewBook where
@@ -110,6 +134,7 @@ instance FromJSON NewBook where
     series <- obj .:? "series"
     volumeNo <- obj .:? "volumeNo"
     memo <- obj .:? "memo" >>= pure . maybe "" id
+    url <- obj .:? "url"
     pure NewBook
       { newTitle = title
       , newAuthor = author
@@ -118,6 +143,7 @@ instance FromJSON NewBook where
       , newSeries = normalizeMaybe series
       , newVolumeNo = volumeNo
       , newMemo = memo
+      , newUrl = normalizeMaybe url
       }
 
 data BookFilter = BookFilter
@@ -125,6 +151,7 @@ data BookFilter = BookFilter
   , filterCategory :: Maybe Text
   , filterSeries :: Maybe Text
   , filterSearch :: Maybe Text
+  , filterSort :: BookSort
   } deriving (Eq, Show)
 
 normalizeMaybe :: Maybe Text -> Maybe Text

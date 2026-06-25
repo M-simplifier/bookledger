@@ -20,13 +20,16 @@ cabal install exe:books
 ```sh
 books init
 books add "砂の女" --author "安部公房" --category 小説
+books add "Example Book" --author "Example" --category 一般書 --status planned --url "https://example.com/book"
 books list
 books web
 books backup
 ```
 
 Initial categories are `未分類`, `小説`, `専門書`, and `一般書`.
-Statuses are `unread`, `reading`, `finished`, and `disposed`.
+Statuses are `planned`, `unread`, `reading`, `finished`, and `disposed`.
+Books can store an optional `url`; in the web UI, titles with URLs open that
+link.
 
 Config is read from `~/.config/bookledger/config.toml`.
 See `example-config.toml` for the SQLite and backup paths.

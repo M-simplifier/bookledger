@@ -18,14 +18,14 @@ import BookLedger.Backup (BackupResult, backupNow)
 import BookLedger.Config
 import BookLedger.Domain
 import qualified BookLedger.Store as Store
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, bracket, try)
 import Database.SQLite.Simple (close)
 import qualified Database.SQLite.Simple
 import qualified Data.Text
 
 initialize :: Config -> IO ()
 initialize cfg =
-  withDb cfg Store.initDb
+  withRawDb cfg Store.initDb
 
 addBookAction :: Config -> NewBook -> IO (Int, Maybe String)
 addBookAction cfg book = do
@@ -74,11 +74,14 @@ backupAction :: Config -> IO BackupResult
 backupAction = backupNow
 
 withDb :: Config -> (Database.SQLite.Simple.Connection -> IO a) -> IO a
-withDb cfg action = do
-  conn <- Store.openDb (cfgDbPath cfg)
-  result <- action conn
-  close conn
-  pure result
+withDb cfg action =
+  withRawDb cfg $ \conn -> do
+    Store.initDb conn
+    action conn
+
+withRawDb :: Config -> (Database.SQLite.Simple.Connection -> IO a) -> IO a
+withRawDb cfg =
+  bracket (Store.openDb (cfgDbPath cfg)) close
 
 backupAfterWrite :: Config -> IO (Maybe String)
 backupAfterWrite cfg

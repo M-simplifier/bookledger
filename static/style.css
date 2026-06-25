@@ -85,7 +85,7 @@ p {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 160px 180px 220px;
+  grid-template-columns: minmax(220px, 1fr) 130px 160px 180px 220px;
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -149,6 +149,15 @@ th {
 
 td.title {
   font-weight: 600;
+}
+
+td.title a {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+td.title a:hover {
+  text-decoration: underline;
 }
 
 td.memo {

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS books (
   title TEXT NOT NULL,
   author TEXT NOT NULL,
   status TEXT NOT NULL CHECK (
-    status IN ('unread', 'reading', 'finished', 'disposed')
+    status IN ('planned', 'unread', 'reading', 'finished', 'disposed')
   ),
   category TEXT NOT NULL REFERENCES categories(name)
     ON UPDATE CASCADE,
@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS books (
     ON UPDATE CASCADE,
   volume_no REAL,
   memo TEXT NOT NULL DEFAULT '',
+  url TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
