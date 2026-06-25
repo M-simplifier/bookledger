@@ -32,6 +32,15 @@ instance FromJSON StatusUpdate where
   parseJSON = withObject "StatusUpdate" $ \obj ->
     StatusUpdate <$> obj .: "id" <*> obj .: "status"
 
+data MemoUpdate = MemoUpdate
+  { memoUpdateId :: Int
+  , memoUpdateMemo :: T.Text
+  } deriving (Eq, Show, Generic)
+
+instance FromJSON MemoUpdate where
+  parseJSON = withObject "MemoUpdate" $ \obj ->
+    MemoUpdate <$> obj .: "id" <*> obj .: "memo"
+
 runWeb :: Config -> Int -> IO ()
 runWeb cfg port = do
   let url = "http://127.0.0.1:" <> show port <> "/"
@@ -57,6 +66,11 @@ app cfg req respond =
       case eitherDecode body of
         Left err -> jsonError respond status400 err
         Right statusUpdate -> jsonResponse respond =<< handleJson (updateStatus cfg statusUpdate)
+    ("POST", ["api", "memo"]) -> do
+      body <- strictRequestBody req
+      case eitherDecode body of
+        Left err -> jsonError respond status400 err
+        Right memoUpdate -> jsonResponse respond =<< handleJson (updateMemo cfg memoUpdate)
     ("POST", ["api", "categories"]) -> do
       body <- strictRequestBody req
       case eitherDecode body of
@@ -102,6 +116,11 @@ createBook cfg newBook = do
 updateStatus :: Config -> StatusUpdate -> IO LBS.ByteString
 updateStatus cfg statusUpdate = do
   warning <- setStatusAction cfg (statusUpdateId statusUpdate) (statusUpdateStatus statusUpdate)
+  pure (encode (object ["ok" .= True, "warning" .= warning]))
+
+updateMemo :: Config -> MemoUpdate -> IO LBS.ByteString
+updateMemo cfg memoUpdate = do
+  warning <- setMemoAction cfg (memoUpdateId memoUpdate) (memoUpdateMemo memoUpdate)
   pure (encode (object ["ok" .= True, "warning" .= warning]))
 
 addCategoryWeb :: Config -> T.Text -> IO LBS.ByteString

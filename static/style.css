@@ -132,11 +132,11 @@ table {
 }
 
 .col-title {
-  width: 27%;
+  width: 25%;
 }
 
 .col-author {
-  width: 16%;
+  width: 14%;
 }
 
 .col-status {
@@ -144,11 +144,11 @@ table {
 }
 
 .col-category {
-  width: 16%;
+  width: 15%;
 }
 
 .col-series {
-  width: 10%;
+  width: 7%;
 }
 
 .col-volume {
@@ -156,7 +156,7 @@ table {
 }
 
 .col-memo {
-  width: 12%;
+  width: 20%;
 }
 
 th,
@@ -193,6 +193,70 @@ td.title a:hover {
 td.memo {
   color: var(--muted);
   white-space: pre-wrap;
+}
+
+td.memo.editing {
+  color: var(--text);
+}
+
+.memo-view {
+  min-height: 34px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: text;
+  padding: 2px 4px;
+  white-space: pre-wrap;
+}
+
+.memo-view:hover,
+.memo-view:focus {
+  background: #f1f5f9;
+  color: var(--text);
+  outline: none;
+}
+
+.memo-empty {
+  color: #98a2b3;
+}
+
+.memo-editor {
+  min-height: 90px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.memo-editor:focus {
+  border-color: var(--accent);
+  outline: 2px solid rgba(15, 118, 110, 0.14);
+}
+
+.memo-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.memo-edit-actions button {
+  width: auto;
+  padding: 5px 10px;
+}
+
+.memo-cancel {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--text);
+}
+
+.memo-cancel:hover {
+  background: #eef2f6;
+}
+
+.memo-error {
+  min-height: 18px;
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 4px;
 }
 
 td select {

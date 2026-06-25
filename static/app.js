@@ -66,7 +66,7 @@ function renderBooks() {
       cell(book.category, "category"),
       cell(book.series || ""),
       cell(book.volumeNo ?? ""),
-      cell(book.memo || "", "memo")
+      memoCell(book)
     );
     return tr;
   }));
@@ -114,6 +114,82 @@ function statusCell(book) {
   });
   td.append(select);
   return td;
+}
+
+function memoCell(book) {
+  const td = document.createElement("td");
+  td.className = "memo";
+  const view = document.createElement("div");
+  view.className = book.memo ? "memo-view" : "memo-view memo-empty";
+  view.textContent = book.memo || "メモを追加";
+  view.tabIndex = 0;
+  view.setAttribute("role", "button");
+  view.title = "クリックしてメモを編集";
+  const openEditor = () => editMemoCell(td, book);
+  view.addEventListener("click", openEditor);
+  view.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openEditor();
+    }
+  });
+  td.append(view);
+  return td;
+}
+
+function editMemoCell(td, book) {
+  td.classList.add("editing");
+  const textarea = document.createElement("textarea");
+  textarea.className = "memo-editor";
+  textarea.value = book.memo || "";
+  textarea.rows = 4;
+
+  const actions = document.createElement("div");
+  actions.className = "memo-edit-actions";
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "memo-save";
+  save.textContent = "保存";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "memo-cancel";
+  cancel.textContent = "キャンセル";
+  const message = document.createElement("div");
+  message.className = "memo-error";
+  actions.append(save, cancel);
+
+  const saveMemo = async () => {
+    save.disabled = true;
+    cancel.disabled = true;
+    message.textContent = "";
+    try {
+      await api("/api/memo", {
+        method: "POST",
+        body: JSON.stringify({ id: book.id, memo: textarea.value })
+      });
+      await loadBooks();
+    } catch (error) {
+      message.textContent = error.message;
+      save.disabled = false;
+      cancel.disabled = false;
+    }
+  };
+
+  save.addEventListener("click", saveMemo);
+  cancel.addEventListener("click", renderBooks);
+  textarea.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      saveMemo();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      renderBooks();
+    }
+  });
+
+  td.replaceChildren(textarea, actions, message);
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 }
 
 async function addBook(event) {

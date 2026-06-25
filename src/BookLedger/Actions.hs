@@ -4,6 +4,7 @@ module BookLedger.Actions
   ( initialize
   , addBookAction
   , setStatusAction
+  , setMemoAction
   , addCategoryAction
   , renameCategoryAction
   , addSeriesAction
@@ -36,6 +37,11 @@ addBookAction cfg book = do
 setStatusAction :: Config -> Int -> Status -> IO (Maybe String)
 setStatusAction cfg bookId status = do
   withDb cfg $ \conn -> Store.updateBookStatus conn bookId status
+  backupAfterWrite cfg
+
+setMemoAction :: Config -> Int -> Data.Text.Text -> IO (Maybe String)
+setMemoAction cfg bookId memo = do
+  withDb cfg $ \conn -> Store.updateBookMemo conn bookId memo
   backupAfterWrite cfg
 
 addCategoryAction :: Config -> String -> IO (Maybe String)

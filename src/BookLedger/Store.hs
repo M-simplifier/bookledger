@@ -11,6 +11,7 @@ module BookLedger.Store
   , listSeries
   , insertBook
   , updateBookStatus
+  , updateBookMemo
   , listBooks
   , integrityCheck
   , vacuumInto
@@ -126,6 +127,12 @@ updateBookStatus conn bookId status =
   execute conn
     "UPDATE books SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
     (statusText status, bookId)
+
+updateBookMemo :: Connection -> Int -> Text -> IO ()
+updateBookMemo conn bookId memo =
+  execute conn
+    "UPDATE books SET memo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    (memo, bookId)
 
 listBooks :: Connection -> BookFilter -> IO [Book]
 listBooks conn filters =
