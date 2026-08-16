@@ -8,6 +8,8 @@ A small local-first book ledger backed by SQLite.
 - Minimal local web UI
 - SQLite database
 - Snapshot backups to a local folder
+- Mobile-first, read-only HTML snapshots with the web UI's search, filters,
+  and sorting
 
 ## Install
 
