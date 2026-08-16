@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: 9.6.7
+          cabal-version: 3.12.1.0
+      - name: Build
+        run: cabal build all
+      - name: Test
+        run: cabal test all --test-show-details=direct

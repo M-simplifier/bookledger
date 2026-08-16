@@ -38,6 +38,16 @@ Backups write `latest.sqlite`, timestamped SQLite snapshots, and refreshed
 Config is read from `~/.config/bookledger/config.toml`.
 See `example-config.toml` for the SQLite and backup paths.
 
+## Tests
+
+```sh
+cabal test all
+```
+
+The test suite uses fresh SQLite databases and backup directories under the
+system temporary directory. It never reads the configured production ledger.
+GitHub Actions runs the same build and test commands on Linux.
+
 This is a small personal tool. PRs are not accepted. Issues are welcome, but
 responses and fixes are not guaranteed.
 

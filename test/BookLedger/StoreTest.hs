@@ -1,0 +1,170 @@
+{-# LANGUAGE OverloadedStrings #-}
+
+module BookLedger.StoreTest (tests) where
+
+import BookLedger.Domain
+import qualified BookLedger.Store as Store
+import BookLedger.TestSupport
+import Data.List (sort)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Database.SQLite.Simple (Only(..), execute, execute_, query_)
+import Test.Tasty (TestTree, testGroup)
+import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
+
+tests :: TestTree
+tests =
+  testGroup
+    "Store"
+    [ testCase "initializes a fresh database with default categories" testInitializesDefaults
+    , testCase "round-trips every stored book field" testBookRoundTrip
+    , testCase "rejects an unknown category without inserting a row" testRejectsUnknownCategory
+    , testCase "rejects an unknown series without inserting a row" testRejectsUnknownSeries
+    , testCase "rejects duplicate book identities" testRejectsDuplicateIdentity
+    , testCase "renaming category and series cascades to books" testRenameCascades
+    , testCase "updates, filters, searches, and active ordering agree" testUpdatesAndFilters
+    , testCase "migrates the legacy schema without losing books" testLegacyMigration
+    ]
+
+testInitializesDefaults :: IO ()
+testInitializesDefaults =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      categories <- Store.listCategories conn
+      sort categories @?= sort ["未分類", "小説", "専門書", "一般書"]
+      Store.integrityCheck conn
+
+testBookRoundTrip :: IO ()
+testBookRoundTrip =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      Store.addSeries conn "新潮文庫"
+      insertedId <- Store.insertBook conn sampleBook
+      books <- Store.listBooks conn (allBooks SortCatalog)
+      case books of
+        [book] -> do
+          bookId book @?= insertedId
+          bookTitle book @?= newTitle sampleBook
+          bookAuthor book @?= newAuthor sampleBook
+          bookStatus book @?= newStatus sampleBook
+          bookCategory book @?= newCategory sampleBook
+          bookSeries book @?= newSeries sampleBook
+          bookVolumeNo book @?= newVolumeNo sampleBook
+          bookMemo book @?= newMemo sampleBook
+          bookUrl book @?= newUrl sampleBook
+          assertBool "created_at should be populated" (not (T.null (bookCreatedAt book)))
+          assertBool "updated_at should be populated" (not (T.null (bookUpdatedAt book)))
+        _ -> assertFailure ("expected one book, got " <> show books)
+
+testRejectsUnknownCategory :: IO ()
+testRejectsUnknownCategory =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      assertThrows
+        (Store.insertBook conn sampleBook {newCategory = "存在しない", newSeries = Nothing})
+      Store.listBooks conn (allBooks SortCatalog) >>= (@?= [])
+
+testRejectsUnknownSeries :: IO ()
+testRejectsUnknownSeries =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      assertThrows
+        (Store.insertBook conn sampleBook {newSeries = Just "存在しないシリーズ"})
+      Store.listBooks conn (allBooks SortCatalog) >>= (@?= [])
+
+testRejectsDuplicateIdentity :: IO ()
+testRejectsDuplicateIdentity =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      Store.addSeries conn "新潮文庫"
+      _ <- Store.insertBook conn sampleBook
+      assertThrows (Store.insertBook conn sampleBook)
+      books <- Store.listBooks conn (allBooks SortCatalog)
+      length books @?= 1
+
+testRenameCascades :: IO ()
+testRenameCascades =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      Store.addSeries conn "新潮文庫"
+      _ <- Store.insertBook conn sampleBook
+      Store.renameCategory conn "小説" "文学"
+      Store.renameSeries conn "新潮文庫" "新潮文庫 改版"
+      books <- Store.listBooks conn (allBooks SortCatalog)
+      case books of
+        [book] -> do
+          bookCategory book @?= "文学"
+          bookSeries book @?= Just "新潮文庫 改版"
+        _ -> assertFailure ("expected one book, got " <> show books)
+
+testUpdatesAndFilters :: IO ()
+testUpdatesAndFilters =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      Store.addSeries conn "新潮文庫"
+      readingId <- Store.insertBook conn sampleBook
+      _ <- Store.insertBook conn sampleBook
+        { newTitle = "未読の本"
+        , newStatus = Unread
+        , newSeries = Nothing
+        , newVolumeNo = Nothing
+        }
+      _ <- Store.insertBook conn sampleBook
+        { newTitle = "購入予定の本"
+        , newStatus = Planned
+        , newCategory = "一般書"
+        , newSeries = Nothing
+        , newVolumeNo = Nothing
+        }
+      Store.updateBookStatus conn readingId Finished
+      Store.updateBookMemo conn readingId "更新後のメモ"
+
+      matching <-
+        Store.listBooks conn
+          BookFilter
+            { filterStatus = Just Finished
+            , filterCategory = Just "小説"
+            , filterSeries = Just "新潮文庫"
+            , filterSearch = Just "更新後"
+            , filterSort = SortActive
+            }
+      map bookId matching @?= [readingId]
+
+      active <- Store.listBooks conn (allBooks SortActive)
+      map bookStatus active @?= [Unread, Planned, Finished]
+
+testLegacyMigration :: IO ()
+testLegacyMigration =
+  withTestConfig 2 $ \cfg ->
+    withConnection cfg $ \conn -> do
+      execute_ conn "CREATE TABLE categories (name TEXT PRIMARY KEY)"
+      execute_ conn "CREATE TABLE series (title TEXT PRIMARY KEY)"
+      execute_ conn "CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT NOT NULL, author TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'finished', 'disposed')), category TEXT NOT NULL REFERENCES categories(name) ON UPDATE CASCADE, series TEXT REFERENCES series(title) ON UPDATE CASCADE, volume_no REAL, memo TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+      execute conn "INSERT INTO categories (name) VALUES (?)" (Only ("小説" :: Text))
+      execute_ conn "INSERT INTO books (id, title, author, status, category, memo, created_at, updated_at) VALUES (41, '移行前の本', '著者', 'reading', '小説', '保持するメモ', '2024-01-02 03:04:05', '2024-02-03 04:05:06')"
+
+      Store.initDb conn
+      Store.integrityCheck conn
+      books <- Store.listBooks conn (allBooks SortCatalog)
+      case books of
+        [book] -> do
+          bookId book @?= 41
+          bookTitle book @?= "移行前の本"
+          bookMemo book @?= "保持するメモ"
+          bookUrl book @?= Nothing
+          bookCreatedAt book @?= "2024-01-02 03:04:05"
+          bookUpdatedAt book @?= "2024-02-03 04:05:06"
+        _ -> assertFailure ("expected one migrated book, got " <> show books)
+
+      plannedId <-
+        Store.insertBook conn sampleBook
+          { newTitle = "移行後の購入予定"
+          , newStatus = Planned
+          , newSeries = Nothing
+          , newVolumeNo = Nothing
+          }
+      assertBool "planned books should be accepted after migration" (plannedId > 41)
+      columns <- query_ conn "PRAGMA table_info(books)" :: IO [(Int, Text, Text, Int, Maybe Text, Int)]
+      assertBool "url column should exist after migration" ("url" `elem` [name | (_, name, _, _, _, _) <- columns])
+      oldTables <- query_ conn "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'books_old'" :: IO [Only Text]
+      oldTables @?= []
