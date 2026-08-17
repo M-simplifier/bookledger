@@ -5,6 +5,7 @@ module BookLedger.Actions
   , addBookAction
   , setStatusAction
   , setMemoAction
+  , updateBooksAction
   , addCategoryAction
   , renameCategoryAction
   , addSeriesAction
@@ -20,6 +21,7 @@ import BookLedger.Config
 import BookLedger.Domain
 import qualified BookLedger.Store as Store
 import Control.Exception (SomeException, bracket, try)
+import Data.List.NonEmpty (NonEmpty)
 import Database.SQLite.Simple (close)
 import qualified Database.SQLite.Simple
 import qualified Data.Text
@@ -42,6 +44,11 @@ setStatusAction cfg bookId status = do
 setMemoAction :: Config -> Int -> Data.Text.Text -> IO (Maybe String)
 setMemoAction cfg bookId memo = do
   withDb cfg $ \conn -> Store.updateBookMemo conn bookId memo
+  backupAfterWrite cfg
+
+updateBooksAction :: Config -> NonEmpty BookUpdate -> IO (Maybe String)
+updateBooksAction cfg updates = do
+  withDb cfg $ \conn -> Store.updateBooks conn updates
   backupAfterWrite cfg
 
 addCategoryAction :: Config -> String -> IO (Maybe String)

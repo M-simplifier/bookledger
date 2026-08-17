@@ -3,6 +3,7 @@
 
 module BookLedger.Web
   ( runWeb
+  , bookledgerApp
   ) where
 
 import BookLedger.Actions
@@ -12,6 +13,7 @@ import Control.Exception (SomeException, try)
 import Control.Monad (void)
 import Data.Aeson (FromJSON(..), eitherDecode, encode, object, withObject, (.:), (.=))
 import qualified Data.ByteString.Lazy as LBS
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -46,10 +48,10 @@ runWeb cfg port = do
   let url = "http://127.0.0.1:" <> show port <> "/"
   putStrLn ("Bookledger web UI: " <> url)
   openBrowser url
-  run port (app cfg)
+  run port (bookledgerApp cfg)
 
-app :: Config -> Application
-app cfg req respond =
+bookledgerApp :: Config -> Application
+bookledgerApp cfg req respond =
   case (requestMethod req, pathInfo req) of
     ("GET", []) -> respondFilePath status200 "static/index.html" respond
     ("GET", ["static", "app.js"]) -> respondFilePath status200 "static/app.js" respond
@@ -61,6 +63,11 @@ app cfg req respond =
       case eitherDecode body of
         Left err -> jsonError respond status400 err
         Right newBook -> jsonResponse respond =<< handleJson (createBook cfg newBook)
+    ("POST", ["api", "books", "batch"]) -> do
+      body <- strictRequestBody req
+      case eitherDecode body of
+        Left err -> jsonError respond status400 err
+        Right (BookUpdateBatch updates) -> jsonResponse respond =<< handleJson (updateBookBatch cfg updates)
     ("POST", ["api", "status"]) -> do
       body <- strictRequestBody req
       case eitherDecode body of
@@ -122,6 +129,11 @@ updateMemo :: Config -> MemoUpdate -> IO LBS.ByteString
 updateMemo cfg memoUpdate = do
   warning <- setMemoAction cfg (memoUpdateId memoUpdate) (memoUpdateMemo memoUpdate)
   pure (encode (object ["ok" .= True, "warning" .= warning]))
+
+updateBookBatch :: Config -> NonEmpty BookUpdate -> IO LBS.ByteString
+updateBookBatch cfg updates = do
+  warning <- updateBooksAction cfg updates
+  pure (encode (object ["ok" .= True, "updated" .= length updates, "warning" .= warning]))
 
 addCategoryWeb :: Config -> T.Text -> IO LBS.ByteString
 addCategoryWeb cfg name = do

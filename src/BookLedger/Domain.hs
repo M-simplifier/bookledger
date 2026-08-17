@@ -11,10 +11,14 @@ module BookLedger.Domain
   , parseBookSort
   , Book(..)
   , NewBook(..)
+  , BookUpdate(..)
+  , BookUpdateBatch(..)
   , BookFilter(..)
   ) where
 
 import Data.Aeson (FromJSON(..), ToJSON(..), Value(String), object, withObject, withText, (.=), (.:), (.:?))
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
@@ -145,6 +149,52 @@ instance FromJSON NewBook where
       , newMemo = memo
       , newUrl = normalizeMaybe url
       }
+
+data BookUpdate = BookUpdate
+  { bookUpdateId :: Int
+  , bookUpdateTitle :: Text
+  , bookUpdateAuthor :: Text
+  , bookUpdateStatus :: Status
+  , bookUpdateCategory :: Text
+  , bookUpdateSeries :: Maybe Text
+  , bookUpdateVolumeNo :: Maybe Double
+  , bookUpdateMemo :: Text
+  , bookUpdateUrl :: Maybe Text
+  } deriving (Eq, Show, Generic)
+
+instance FromJSON BookUpdate where
+  parseJSON = withObject "BookUpdate" $ \obj -> do
+    bookId <- obj .: "id"
+    title <- obj .: "title"
+    author <- obj .: "author"
+    status <- obj .: "status"
+    category <- obj .: "category"
+    series <- obj .:? "series"
+    volumeNo <- obj .:? "volumeNo"
+    memo <- obj .:? "memo" >>= pure . maybe "" id
+    url <- obj .:? "url"
+    pure BookUpdate
+      { bookUpdateId = bookId
+      , bookUpdateTitle = T.strip title
+      , bookUpdateAuthor = T.strip author
+      , bookUpdateStatus = status
+      , bookUpdateCategory = T.strip category
+      , bookUpdateSeries = normalizeMaybe series
+      , bookUpdateVolumeNo = volumeNo
+      , bookUpdateMemo = memo
+      , bookUpdateUrl = normalizeMaybe url
+      }
+
+newtype BookUpdateBatch = BookUpdateBatch
+  { batchBookUpdates :: NonEmpty BookUpdate
+  } deriving (Eq, Show, Generic)
+
+instance FromJSON BookUpdateBatch where
+  parseJSON = withObject "BookUpdateBatch" $ \obj -> do
+    updates <- obj .: "books"
+    case NE.nonEmpty updates of
+      Nothing -> fail "books must contain at least one update"
+      Just nonEmptyUpdates -> pure (BookUpdateBatch nonEmptyUpdates)
 
 data BookFilter = BookFilter
   { filterStatus :: Maybe Status

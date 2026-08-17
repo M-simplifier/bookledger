@@ -6,6 +6,7 @@ import BookLedger.Domain
 import qualified BookLedger.Store as Store
 import BookLedger.TestSupport
 import Data.List (sort)
+import Data.List.NonEmpty (NonEmpty((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.SQLite.Simple (Only(..), execute, execute_, query_)
@@ -23,6 +24,8 @@ tests =
     , testCase "rejects duplicate book identities" testRejectsDuplicateIdentity
     , testCase "renaming category and series cascades to books" testRenameCascades
     , testCase "updates, filters, searches, and active ordering agree" testUpdatesAndFilters
+    , testCase "batch update changes every editable book field" testBatchUpdateAllFields
+    , testCase "batch update rolls back every book when one update fails" testBatchUpdateRollsBack
     , testCase "migrates the legacy schema without losing books" testLegacyMigration
     ]
 
@@ -132,6 +135,75 @@ testUpdatesAndFilters =
 
       active <- Store.listBooks conn (allBooks SortActive)
       map bookStatus active @?= [Unread, Planned, Finished]
+
+testBatchUpdateAllFields :: IO ()
+testBatchUpdateAllFields =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      Store.addSeries conn "新潮文庫"
+      Store.addSeries conn "岩波文庫"
+      bookId <- Store.insertBook conn sampleBook
+
+      Store.updateBooks conn
+        ( BookUpdate
+            { bookUpdateId = bookId
+            , bookUpdateTitle = "  砂の女 改版  "
+            , bookUpdateAuthor = "  安部 公房  "
+            , bookUpdateStatus = Finished
+            , bookUpdateCategory = "一般書"
+            , bookUpdateSeries = Just "岩波文庫"
+            , bookUpdateVolumeNo = Just 2.5
+            , bookUpdateMemo = "一括更新後\nのメモ"
+            , bookUpdateUrl = Just "https://example.com/updated"
+            }
+        :| []
+        )
+
+      books <- Store.listBooks conn (allBooks SortCatalog)
+      case books of
+        [book] -> do
+          bookTitle book @?= "砂の女 改版"
+          bookAuthor book @?= "安部 公房"
+          bookStatus book @?= Finished
+          bookCategory book @?= "一般書"
+          bookSeries book @?= Just "岩波文庫"
+          bookVolumeNo book @?= Just 2.5
+          bookMemo book @?= "一括更新後\nのメモ"
+          bookUrl book @?= Just "https://example.com/updated"
+        _ -> assertFailure ("expected one updated book, got " <> show books)
+
+testBatchUpdateRollsBack :: IO ()
+testBatchUpdateRollsBack =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      firstId <- Store.insertBook conn sampleBook {newSeries = Nothing, newVolumeNo = Nothing}
+      secondId <- Store.insertBook conn sampleBook
+        { newTitle = "別の本"
+        , newSeries = Nothing
+        , newVolumeNo = Nothing
+        }
+      let updateFor bookId title =
+            BookUpdate
+              { bookUpdateId = bookId
+              , bookUpdateTitle = title
+              , bookUpdateAuthor = newAuthor sampleBook
+              , bookUpdateStatus = Reading
+              , bookUpdateCategory = "小説"
+              , bookUpdateSeries = Nothing
+              , bookUpdateVolumeNo = Nothing
+              , bookUpdateMemo = "更新しない"
+              , bookUpdateUrl = Nothing
+              }
+
+      assertThrows
+        (Store.updateBooks conn
+          ( updateFor firstId "重複する本"
+          :| [updateFor secondId "重複する本"]
+          ))
+
+      books <- Store.listBooks conn (allBooks SortCatalog)
+      map bookTitle books @?= ["別の本", newTitle sampleBook]
+      map bookMemo books @?= [newMemo sampleBook, newMemo sampleBook]
 
 testLegacyMigration :: IO ()
 testLegacyMigration =

@@ -12,6 +12,7 @@ module BookLedger.Store
   , insertBook
   , updateBookStatus
   , updateBookMemo
+  , updateBooks
   , listBooks
   , integrityCheck
   , vacuumInto
@@ -19,7 +20,8 @@ module BookLedger.Store
 
 import BookLedger.Domain
 import Control.Exception (finally, throwIO)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -134,6 +136,35 @@ updateBookMemo conn bookId memo =
     "UPDATE books SET memo = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
     (memo, bookId)
 
+updateBooks :: Connection -> NonEmpty BookUpdate -> IO ()
+updateBooks conn updates =
+  withTransaction conn $ do
+    mapM_ (validateBookUpdate conn) updates
+    mapM_ (updateBook conn) updates
+
+validateBookUpdate :: Connection -> BookUpdate -> IO ()
+validateBookUpdate conn book = do
+  ensureBookExists conn (bookUpdateId book)
+  ensureRequired "title" (bookUpdateTitle book)
+  ensureRequired "author" (bookUpdateAuthor book)
+  ensureCategory conn (bookUpdateCategory book)
+  mapM_ (ensureSeries conn) (bookUpdateSeries book)
+
+updateBook :: Connection -> BookUpdate -> IO ()
+updateBook conn book =
+  execute conn
+    "UPDATE books SET title = ?, author = ?, status = ?, category = ?, series = ?, volume_no = ?, memo = ?, url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ( T.strip (bookUpdateTitle book)
+    , T.strip (bookUpdateAuthor book)
+    , statusText (bookUpdateStatus book)
+    , T.strip (bookUpdateCategory book)
+    , fmap T.strip (bookUpdateSeries book)
+    , bookUpdateVolumeNo book
+    , bookUpdateMemo book
+    , fmap T.strip (bookUpdateUrl book)
+    , bookUpdateId book
+    )
+
 listBooks :: Connection -> BookFilter -> IO [Book]
 listBooks conn filters =
   map unBookRow <$> query conn (Query sql) params
@@ -190,6 +221,18 @@ ensureSeries conn seriesTitle = do
   case rows of
     [_] -> pure ()
     _ -> throwIO (userError ("unknown series: " <> T.unpack seriesTitle))
+
+ensureBookExists :: Connection -> Int -> IO ()
+ensureBookExists conn bookId = do
+  rows <- query conn "SELECT 1 FROM books WHERE id = ? LIMIT 1" (Only bookId) :: IO [Only Int]
+  case rows of
+    [_] -> pure ()
+    _ -> throwIO (userError ("unknown book id: " <> show bookId))
+
+ensureRequired :: String -> Text -> IO ()
+ensureRequired fieldName value =
+  when (T.null (T.strip value)) $
+    throwIO (userError (fieldName <> " must not be blank"))
 
 newtype BookRow = BookRow { unBookRow :: Book }
 

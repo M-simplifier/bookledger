@@ -13,8 +13,23 @@
         <h1>Bookledger</h1>
         <p id="summary">Loading</p>
       </div>
-      <button id="refresh" type="button">更新</button>
+      <div class="topbar-actions">
+        <button id="edit-toggle" class="button-secondary" type="button">書籍情報を編集</button>
+        <button id="refresh" type="button">更新</button>
+      </div>
     </header>
+
+    <section id="edit-toolbar" class="edit-toolbar" aria-label="編集操作" hidden>
+      <div>
+        <strong>書籍情報の編集モード</strong>
+        <span id="edit-summary">変更はありません</span>
+      </div>
+      <div class="edit-actions">
+        <button id="save-edits" type="button">変更を保存</button>
+        <button id="discard-edits" class="button-secondary" type="button">変更を破棄</button>
+      </div>
+      <p id="edit-message" class="edit-message" role="status"></p>
+    </section>
 
     <section class="toolbar" aria-label="filters">
       <input id="search" type="search" placeholder="タイトル・著者・メモを検索">

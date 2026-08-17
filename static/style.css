@@ -42,6 +42,21 @@ button:hover {
   background: var(--accent-strong);
 }
 
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.button-secondary {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--text);
+}
+
+.button-secondary:hover {
+  background: #eef2f6;
+}
+
 input,
 select,
 textarea {
@@ -64,6 +79,51 @@ textarea {
   align-items: center;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.topbar-actions,
+.edit-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.edit-toolbar {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 16px;
+  align-items: center;
+  margin-bottom: 14px;
+  border: 1px solid #e4b86a;
+  border-radius: 8px;
+  background: #fff7e6;
+  padding: 10px 12px;
+  box-shadow: 0 4px 14px rgba(71, 51, 18, 0.09);
+}
+
+.edit-toolbar[hidden] {
+  display: none;
+}
+
+.edit-toolbar strong {
+  margin-right: 10px;
+}
+
+.edit-toolbar span {
+  color: #7a4b08;
+}
+
+.edit-message {
+  grid-column: 1 / -1;
+  min-height: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.edit-message.success {
+  color: var(--accent-strong);
 }
 
 h1 {
@@ -263,6 +323,76 @@ td select {
   min-width: 104px;
 }
 
+tr.dirty td {
+  background: #fff9eb;
+}
+
+.book-editor-title {
+  display: grid;
+  gap: 6px;
+}
+
+.book-editor-title input:first-child {
+  font-weight: 600;
+}
+
+.book-editor input,
+.book-editor select,
+.book-editor textarea {
+  min-width: 0;
+  padding: 6px 7px;
+}
+
+.book-editor textarea {
+  min-height: 76px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+body.editing-mode .table-panel {
+  border-color: #e4b86a;
+}
+
+body.editing-mode .grid {
+  grid-template-columns: 1fr;
+}
+
+body.editing-mode #add-book {
+  display: none;
+}
+
+body.editing-mode table {
+  min-width: 1180px;
+}
+
+body.editing-mode .col-title {
+  width: 24%;
+}
+
+body.editing-mode .col-author {
+  width: 14%;
+}
+
+body.editing-mode .col-status {
+  width: 12%;
+}
+
+body.editing-mode .col-category {
+  width: 14%;
+}
+
+body.editing-mode .col-series {
+  width: 12%;
+}
+
+body.editing-mode .col-volume {
+  width: 7%;
+}
+
+body.editing-mode .col-memo {
+  width: 17%;
+}
+
 .manage {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -292,5 +422,21 @@ td select {
   .shell {
     width: min(100vw - 20px, 1280px);
     margin: 12px auto;
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .topbar-actions {
+    flex-direction: column;
+  }
+
+  .edit-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .edit-message {
+    grid-column: 1;
   }
 }
