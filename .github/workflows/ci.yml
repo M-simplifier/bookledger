@@ -8,15 +8,38 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHC_VERSION: 9.6.7
+  CABAL_VERSION: 3.12.1.0
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-      - uses: haskell-actions/setup@v2
+      - id: setup
+        uses: haskell-actions/setup@v2
         with:
-          ghc-version: 9.6.7
-          cabal-version: 3.12.1.0
+          ghc-version: ${{ env.GHC_VERSION }}
+          cabal-version: ${{ env.CABAL_VERSION }}
+          cabal-update: false
+      - name: Restore Cabal dependencies
+        id: cabal-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cabal/packages
+            ${{ steps.setup.outputs.cabal-store }}
+          key: cabal-${{ runner.os }}-${{ runner.arch }}-ghc-${{ env.GHC_VERSION }}-cabal-${{ env.CABAL_VERSION }}-${{ hashFiles('bookledger.cabal', 'cabal.project.freeze') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-${{ runner.arch }}-ghc-${{ env.GHC_VERSION }}-cabal-${{ env.CABAL_VERSION }}-
+      - name: Update package index
+        if: steps.cabal-cache.outputs.cache-hit != 'true'
+        run: cabal update
       - name: Build
         run: cabal build all
       - name: Test
