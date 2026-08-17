@@ -34,13 +34,13 @@ jobs:
           path: |
             ~/.cabal/packages
             ${{ steps.setup.outputs.cabal-store }}
-          key: cabal-${{ runner.os }}-${{ runner.arch }}-ghc-${{ env.GHC_VERSION }}-cabal-${{ env.CABAL_VERSION }}-${{ hashFiles('bookledger.cabal', 'cabal.project.freeze') }}
+          key: cabal-${{ runner.os }}-${{ runner.arch }}-ghc-${{ env.GHC_VERSION }}-cabal-${{ env.CABAL_VERSION }}-${{ hashFiles('bookledger.cabal', 'cabal.project', 'cabal.project.ci', 'cabal.project.freeze') }}
           restore-keys: |
             cabal-${{ runner.os }}-${{ runner.arch }}-ghc-${{ env.GHC_VERSION }}-cabal-${{ env.CABAL_VERSION }}-
       - name: Update package index
         if: steps.cabal-cache.outputs.cache-hit != 'true'
         run: cabal update
       - name: Build
-        run: cabal build all --disable-optimization
+        run: cabal build all --project-file=cabal.project.ci
       - name: Test
-        run: cabal test all --disable-optimization --test-show-details=direct
+        run: cabal test all --project-file=cabal.project.ci --test-show-details=direct

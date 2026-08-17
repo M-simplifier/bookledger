@@ -1,0 +1,5 @@
+import: cabal.project
+import: cabal.project.freeze
+
+package *
+  optimization: False
