@@ -41,6 +41,6 @@ jobs:
         if: steps.cabal-cache.outputs.cache-hit != 'true'
         run: cabal update
       - name: Build
-        run: cabal build all
+        run: cabal build all --disable-optimization
       - name: Test
-        run: cabal test all --test-show-details=direct
+        run: cabal test all --disable-optimization --test-show-details=direct
