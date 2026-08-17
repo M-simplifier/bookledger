@@ -1,7 +1,7 @@
 # CI performance experiment
 
 Bookledger is a small Haskell CLI, but a fresh GitHub-hosted runner originally
-spent almost eight minutes building and testing it. This experiment asks a
+spent almost eight minutes building and testing it. This experiment asked a
 narrower question than whether Haskell builds are universally fast:
 
 > Can an ordinary source change receive a full independent build and test on a
@@ -10,49 +10,62 @@ narrower question than whether Haskell builds are universally fast:
 ## Conditions
 
 - GitHub-hosted `ubuntu-24.04` x64 runner
-- GHC 9.6.7 and cabal-install 3.12.1.0
 - Dependencies fixed by `cabal.project.freeze`
 - All library and executable targets built
 - All 17 tests run
 - Only `~/.cabal/packages` and `~/.cabal/store` cached; Bookledger itself is
   compiled from source on every run
 
-The CI build disables optimization because its purpose is typechecking and
-testing this personal CLI, not producing a release binary.
+The current workflow uses GHC 9.10.3 and cabal-install 3.16.1.0. It disables
+optimization for every package because its purpose is typechecking and testing
+this personal CLI, not producing a release binary. Earlier measurements used
+GHC 9.6.7 and cabal-install 3.12.1.0 as noted below.
 
 ## Results
 
-Measurements were taken on 2026-08-18. Ranges contain two consecutive warm
-runs; GitHub runner provisioning accounts for most of the variation.
+Measurements were taken on 2026-08-18. The first four rows establish the
+original cache experiment. The remaining rows measure the final all-package
+unoptimized configuration and the recommended-toolchain upgrade.
 
-| Configuration | Job time | Build + test |
-| --- | ---: | ---: |
-| No cache, optimized | 7m 52s | 5m 53s |
-| Empty cache, optimized | 7m 54s | 5m 55s |
-| Warm dependency cache, optimized | 1m 59s–2m 06s | 18s |
-| Warm dependency cache, unoptimized | 1m 45s–2m 02s | 13–14s |
+| Toolchain | Dependency state | Optimization | Job time | Build + test |
+| --- | --- | --- | ---: | ---: |
+| GHC 9.6.7 | No cache action | `-O1` | 7m 52s | 5m 53s |
+| GHC 9.6.7 | Empty cache | `-O1` | 7m 54s | 5m 55s |
+| GHC 9.6.7 | Warm cache | `-O1` | 1m 59s–2m 06s | 18s |
+| GHC 9.6.7 | Warm cache | Bookledger only `-O0` | 1m 45s–2m 02s | 13–14s |
+| GHC 9.6.7 | Compiled cache cold; package sources restored | All packages `-O0` | 5m 59s | 4m 05s |
+| GHC 9.6.7 | Warm cache | All packages `-O0` | 1m 57s | 13s |
+| GHC 9.10.3 | Empty cache | All packages `-O0` | 5m 11s | 3m 07s |
+| GHC 9.10.3 | Warm cache | All packages `-O0` | 2m 16s | 15s |
 
-The dependency cache is about 280 MB and restores in four to seven seconds.
-A warm run is 74–78% shorter than the pre-cache baseline. Disabling
-optimization consistently saves another four seconds in the build step, but
-has little influence on total time because installing GHC and Cabal now takes
-roughly 81–95 seconds.
+The dependency cache is about 280 MB and normally restores in a few seconds.
+With GHC 9.6.7, disabling optimization for dependencies reduced the cold build
+step from 5m 38s to 3m 53s, a 31% reduction. The source-restored row is not a
+strictly empty machine: the old compiled artifacts could not be reused, but the
+package index and source tarballs could.
+
+After upgrading to the recommended GHC 9.10.3 toolchain, a genuinely empty
+toolchain-specific cache completed in 5m 11s. Its build and test took 3m 07s;
+the warm rerun took 2m 16s overall. On warm runs, installing GHC and Cabal now
+dominates the job at roughly 1m 34s–1m 54s.
 
 Supporting runs:
 
 - [Pre-cache baseline](https://github.com/M-simplifier/bookledger/actions/runs/32044429198)
 - [Empty cache and optimized warm reruns](https://github.com/M-simplifier/bookledger/actions/runs/32046892874)
-- [Unoptimized warm reruns](https://github.com/M-simplifier/bookledger/actions/runs/32047929646)
+- [Bookledger-only unoptimized warm reruns](https://github.com/M-simplifier/bookledger/actions/runs/32047929646)
+- [All-package unoptimized cold-equivalent and warm runs](https://github.com/M-simplifier/bookledger/actions/runs/32050660954)
+- [GHC 9.10.3 empty-cache and warm runs](https://github.com/M-simplifier/bookledger/actions/runs/32052325835)
 
-## What this establishes
+## Conclusion
 
 For this application, slow CI was primarily a failure to reuse compiled
 dependencies, not the cost of compiling the application or running its tests.
 The under-three-minute target is met on an ephemeral hosted runner without a
 self-hosted machine, a custom container, or reduced test coverage.
 
-This is not evidence that cold Haskell builds are cheap, nor that the result
-generalizes to large projects or other operating systems. Cold builds remain
-close to eight minutes. The next meaningful experiment would target toolchain
-provisioning, which now dominates warm CI; further application-level tuning
-would save only seconds.
+Turning off dependency optimization also materially improved the empty-cache
+case and requires only one small Cabal project file. It is retained. Further
+optimization is deliberately out of scope: warm CI is already fast enough for
+this project, and more elaborate toolchain caching would add complexity mainly
+to save time in a job whose dominant cost is provisioning the compiler.
