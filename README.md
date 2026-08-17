@@ -51,7 +51,9 @@ cabal test all
 
 The test suite uses fresh SQLite databases and backup directories under the
 system temporary directory. It never reads the configured production ledger.
-GitHub Actions runs the same build and test commands on Linux.
+GitHub Actions builds all targets and runs the same test suite on Linux.
+See the [CI performance experiment](docs/ci-performance.md) for measured cold
+and cached build times.
 
 This is a small personal tool. PRs are not accepted. Issues are welcome, but
 responses and fixes are not guaranteed.
