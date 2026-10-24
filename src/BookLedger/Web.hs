@@ -9,20 +9,21 @@ module BookLedger.Web
 import BookLedger.Actions
 import BookLedger.Config
 import BookLedger.Domain
-import Control.Exception (SomeException, try)
+import BookLedger.Store (BookUpdateConflict)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (void)
 import Data.Aeson (FromJSON(..), eitherDecode, encode, object, withObject, (.:), (.=))
 import qualified Data.ByteString.Lazy as LBS
-import Data.List.NonEmpty (NonEmpty)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import qualified Network.HTTP.Types as HTTP
-import Network.HTTP.Types (ResponseHeaders, status200, status400, status404)
+import Network.HTTP.Types (ResponseHeaders, status200, status400, status404, status409)
 import Network.Wai
 import Network.Wai.Handler.Warp
 import Paths_bookledger (getDataFileName)
+import System.FilePath (takeExtension)
 import System.Process (callProcess)
 
 data StatusUpdate = StatusUpdate
@@ -48,13 +49,15 @@ runWeb cfg port = do
   let url = "http://127.0.0.1:" <> show port <> "/"
   putStrLn ("Bookledger web UI: " <> url)
   openBrowser url
-  run port (bookledgerApp cfg)
+  runSettings (setHost "127.0.0.1" (setPort port defaultSettings)) (bookledgerApp cfg)
 
 bookledgerApp :: Config -> Application
 bookledgerApp cfg req respond =
   case (requestMethod req, pathInfo req) of
     ("GET", []) -> respondFilePath status200 "static/index.html" respond
     ("GET", ["static", "app.js"]) -> respondFilePath status200 "static/app.js" respond
+    ("GET", ["static", "model.js"]) -> respondFilePath status200 "static/model.js" respond
+    ("GET", ["static", "store.js"]) -> respondFilePath status200 "static/store.js" respond
     ("GET", ["static", "style.css"]) -> respondFilePath status200 "static/style.css" respond
     ("GET", ["api", "meta"]) -> jsonResponse respond =<< handleJson (loadMeta cfg)
     ("GET", ["api", "books"]) -> jsonResponse respond =<< handleJson (loadBooks cfg req)
@@ -67,7 +70,7 @@ bookledgerApp cfg req respond =
       body <- strictRequestBody req
       case eitherDecode body of
         Left err -> jsonError respond status400 err
-        Right (BookUpdateBatch updates) -> jsonResponse respond =<< handleJson (updateBookBatch cfg updates)
+        Right batch -> jsonResponse respond =<< handleJson (updateBookBatch cfg batch)
     ("POST", ["api", "status"]) -> do
       body <- strictRequestBody req
       case eitherDecode body of
@@ -98,7 +101,12 @@ instance FromJSON NamePayload where
 respondFilePath :: HTTP.Status -> FilePath -> (Response -> IO ResponseReceived) -> IO ResponseReceived
 respondFilePath status path respond = do
   fullPath <- getDataFileName path
-  respond (responseFile status [] fullPath Nothing)
+  let contentType = case takeExtension path of
+        ".html" -> "text/html; charset=utf-8"
+        ".js" -> "text/javascript; charset=utf-8"
+        ".css" -> "text/css; charset=utf-8"
+        _ -> "application/octet-stream"
+  respond (responseFile status [("content-type", contentType), ("cache-control", "no-cache")] fullPath Nothing)
 
 loadMeta :: Config -> IO LBS.ByteString
 loadMeta cfg = do
@@ -130,10 +138,10 @@ updateMemo cfg memoUpdate = do
   warning <- setMemoAction cfg (memoUpdateId memoUpdate) (memoUpdateMemo memoUpdate)
   pure (encode (object ["ok" .= True, "warning" .= warning]))
 
-updateBookBatch :: Config -> NonEmpty BookUpdate -> IO LBS.ByteString
-updateBookBatch cfg updates = do
-  warning <- updateBooksAction cfg updates
-  pure (encode (object ["ok" .= True, "updated" .= length updates, "warning" .= warning]))
+updateBookBatch :: Config -> BookUpdateBatch -> IO LBS.ByteString
+updateBookBatch cfg batch = do
+  warning <- updateBookBatchAction cfg batch
+  pure (encode (object ["ok" .= True, "updated" .= length (batchBookUpdates batch), "warning" .= warning]))
 
 addCategoryWeb :: Config -> T.Text -> IO LBS.ByteString
 addCategoryWeb cfg name = do
@@ -160,16 +168,26 @@ filterFromRequest req =
     let value = T.strip (TE.decodeUtf8 raw)
     if T.null value then Nothing else Just value
 
-handleJson :: IO LBS.ByteString -> IO (Either String LBS.ByteString)
+data JsonFailure = RequestFailure String | EditConflict String
+
+handleJson :: IO LBS.ByteString -> IO (Either JsonFailure LBS.ByteString)
 handleJson action = do
   result <- try action :: IO (Either SomeException LBS.ByteString)
-  pure (either (Left . show) Right result)
+  case result of
+    Right body -> pure (Right body)
+    Left err -> case fromException err :: Maybe SomeAsyncException of
+      Just async -> throwIO async
+      Nothing -> pure (Left (case fromException err :: Maybe BookUpdateConflict of
+        Just conflict -> EditConflict (displayException conflict)
+        Nothing -> RequestFailure (displayException err)))
 
-jsonResponse :: (Response -> IO ResponseReceived) -> Either String LBS.ByteString -> IO ResponseReceived
+jsonResponse :: (Response -> IO ResponseReceived) -> Either JsonFailure LBS.ByteString -> IO ResponseReceived
 jsonResponse respond result =
   case result of
     Right body -> respond (responseLBS status200 jsonHeaders body)
-    Left err -> jsonError respond status400 err
+    Left (RequestFailure err) -> jsonError respond status400 err
+    Left (EditConflict err) ->
+      respond (responseLBS status409 jsonHeaders (encode (object ["ok" .= False, "error" .= err, "conflict" .= True])))
 
 jsonError :: (Response -> IO ResponseReceived) -> HTTP.Status -> String -> IO ResponseReceived
 jsonError respond status err =

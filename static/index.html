@@ -2,100 +2,69 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bookledger</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>books</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <h1>Bookledger</h1>
-        <p id="summary">Loading</p>
+<body data-view="list">
+  <a class="skip-link" href="#search">検索へ移動</a>
+  <button class="sidebar-shade" data-action="toggle-sidebar" aria-label="サイドバーを閉じる" hidden></button>
+  <div class="workspace">
+    <aside class="sidebar" id="sidebar" aria-label="本棚">
+      <div class="sidebar-top"><span class="brand">books</span><button class="icon-button sidebar-close" data-action="toggle-sidebar" aria-label="サイドバーを閉じる"><svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17"/></svg></button></div>
+      <div class="sidebar-content">
+      <nav id="status-nav" aria-label="読書の状態"></nav>
+      <div class="sidebar-heading"><span>カテゴリ</span><button class="icon-button" data-action="manage" data-kind="category" title="カテゴリを追加" aria-label="カテゴリを追加"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
+      <nav id="category-nav" aria-label="カテゴリ"></nav>
+      <div class="sidebar-heading"><span>シリーズ</span><button class="icon-button" data-action="manage" data-kind="series" title="シリーズを追加" aria-label="シリーズを追加"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div>
+      <nav id="series-nav" aria-label="シリーズ"></nav>
       </div>
-      <div class="topbar-actions">
-        <button id="edit-toggle" class="button-secondary" type="button">書籍情報を編集</button>
-        <button id="refresh" type="button">更新</button>
+      <div class="sidebar-foot"><span id="storage-caption"></span></div>
+    </aside>
+    <div class="main-pane">
+      <header class="app-header">
+        <button class="icon-button sidebar-toggle" data-action="toggle-sidebar" aria-label="サイドバーを切り替える" aria-controls="sidebar" aria-expanded="true" title="サイドバー"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+        <div class="heading-label"><h1 id="page-title">すべての本</h1><span id="heading-count"></span></div>
+        <div class="search-box"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="search" type="search" placeholder="検索" aria-label="蔵書を検索" autocomplete="off"><kbd>/</kbd></div>
+        <div class="app-actions">
+          <button class="icon-button" popovertarget="more-menu" aria-label="その他の操作" title="その他の操作"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+          <button class="primary-button" data-action="add"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>追加</span></button>
+        </div>
+      </header>
+      <div class="tools-area">
+        <div class="collection-toolbar">
+          <button id="filter-button" class="filter-trigger" popovertarget="filter-menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg><span>絞り込み</span><span id="filter-count" hidden></span></button>
+          <div class="list-options"><select id="sort" aria-label="並び順"><option value="active">状態順</option><option value="updated">更新順</option><option value="catalog">目録順</option><option value="title">タイトル順</option></select><button id="selection-toggle" class="text-button" data-action="select-mode" aria-pressed="false">選択</button></div>
+        </div>
+        <div id="filter-chips" class="filter-chips"></div><div id="connection-notice" class="connection-notice" role="status" hidden></div><div id="recovery-panel" class="recovery-panel" hidden></div>
+        <div id="edit-toolbar" class="edit-toolbar" hidden></div>
+        <div id="selection-bar" class="selection-bar" hidden></div>
       </div>
-    </header>
+      <main id="content-scroll" class="content-scroll" aria-label="蔵書一覧"><div id="book-list"></div></main>
+    </div>
+  </div>
+  <div id="filter-menu" popover class="filter-menu" aria-label="一覧の絞り込み">
+    <div class="filter-menu-top"><span>絞り込み</span><button id="reset-filters" class="text-button" data-action="reset-filters">解除</button></div>
+    <label id="status-filter-field" class="filter-field">状態<select id="status-filter" aria-label="状態で絞り込み"></select></label>
+    <label id="category-filter-field" class="filter-field">カテゴリ<select id="category-filter" aria-label="カテゴリで絞り込み"></select></label>
+    <label id="series-filter-field" class="filter-field">シリーズ<select id="series-filter" aria-label="シリーズで絞り込み"></select></label>
+  </div>
+  <div id="more-menu" popover class="more-menu" aria-label="その他の操作">
+    <button id="undo-button" data-action="undo" disabled><span>元に戻す</span><span class="menu-symbol">↶</span></button>
+    <button data-action="table-edit">表で編集</button>
+    <button id="density-button" data-action="density" aria-pressed="false"><span>行をコンパクトに</span><span id="density-mark"></span></button>
+    <div class="menu-separator"></div>
+    <button data-action="manage">カテゴリ・シリーズ</button>
+    <button data-action="refresh">再読み込み</button><button data-action="export">JSONを書き出す</button>
 
-    <section id="edit-toolbar" class="edit-toolbar" aria-label="編集操作" hidden>
-      <div>
-        <strong>書籍情報の編集モード</strong>
-        <span id="edit-summary">変更はありません</span>
-      </div>
-      <div class="edit-actions">
-        <button id="save-edits" type="button">変更を保存</button>
-        <button id="discard-edits" class="button-secondary" type="button">変更を破棄</button>
-      </div>
-      <p id="edit-message" class="edit-message" role="status"></p>
-    </section>
-
-    <section class="toolbar" aria-label="filters">
-      <input id="search" type="search" placeholder="タイトル・著者・メモを検索">
-      <select id="sort" aria-label="並び順">
-        <option value="active">状態順</option>
-        <option value="updated">更新順</option>
-        <option value="catalog">目録順</option>
-      </select>
-      <select id="status"></select>
-      <select id="category"></select>
-      <select id="series"></select>
-    </section>
-
-    <section class="grid">
-      <form id="add-book" class="panel">
-        <h2>追加</h2>
-        <label>タイトル<input name="title" required></label>
-        <label>URL<input name="url" type="url"></label>
-        <label>著者<input name="author" required></label>
-        <label>状態<select name="status" required></select></label>
-        <label>カテゴリ<select name="category" required></select></label>
-        <label>シリーズ<select name="series"></select></label>
-        <label>巻<input name="volumeNo" type="number" step="0.1"></label>
-        <label>メモ<textarea name="memo" rows="4"></textarea></label>
-        <button type="submit">追加</button>
-        <p id="form-message" class="message"></p>
-      </form>
-
-      <section class="table-panel">
-        <table>
-          <colgroup>
-            <col class="col-title">
-            <col class="col-author">
-            <col class="col-status">
-            <col class="col-category">
-            <col class="col-series">
-            <col class="col-volume">
-            <col class="col-memo">
-          </colgroup>
-          <thead>
-            <tr>
-              <th>タイトル</th>
-              <th>著者</th>
-              <th>状態</th>
-              <th>カテゴリ</th>
-              <th>シリーズ</th>
-              <th>巻</th>
-              <th>メモ</th>
-            </tr>
-          </thead>
-          <tbody id="books"></tbody>
-        </table>
-      </section>
-    </section>
-
-    <section class="manage">
-      <form id="add-category">
-        <input name="name" placeholder="新しいカテゴリ">
-        <button type="submit">カテゴリ追加</button>
-      </form>
-      <form id="add-series">
-        <input name="name" placeholder="新しいシリーズ">
-        <button type="submit">シリーズ追加</button>
-      </form>
-    </section>
-  </main>
+  </div>
+  <dialog id="editor" class="editor-dialog" aria-labelledby="editor-heading"></dialog>
+  <dialog id="manage-dialog" class="center-dialog" aria-labelledby="manage-heading"></dialog>
+  <dialog id="confirm-dialog" class="center-dialog confirm-dialog" aria-labelledby="confirm-heading"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/static/model.js"></script>
+  <script src="/static/store.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

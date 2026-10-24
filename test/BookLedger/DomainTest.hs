@@ -17,13 +17,15 @@ tests =
     "Domain"
     [ testCase "decodes and normalizes an editor batch" testDecodeEditorBatch
     , testCase "rejects an empty editor batch" testRejectEmptyEditorBatch
+    , testCase "decodes complete expected values without normalization" testDecodeExpectedValues
+    , testCase "requires complete non-empty expected rows when supplied" testRejectIncompleteExpected
     ]
 
 testDecodeEditorBatch :: IO ()
 testDecodeEditorBatch =
   case eitherDecode payload of
     Left err -> assertFailure err
-    Right (BookUpdateBatch (book :| [])) -> do
+    Right (BookUpdateBatch (book :| []) Nothing) -> do
       bookUpdateId book @?= 7
       bookUpdateTitle book @?= "砂の女"
       bookUpdateAuthor book @?= "安部公房"
@@ -36,6 +38,33 @@ testDecodeEditorBatch =
     Right decoded -> assertFailure ("unexpected batch: " <> show decoded)
  where
   payload = LBS.fromStrict (TE.encodeUtf8 "{\"books\":[{\"id\":7,\"title\":\" 砂の女 \",\"author\":\" 安部公房 \",\"status\":\"finished\",\"category\":\" 小説 \",\"series\":\"  \",\"volumeNo\":1.5,\"memo\":\"確認メモ\",\"url\":\"\"}]}")
+
+testDecodeExpectedValues :: IO ()
+testDecodeExpectedValues =
+  case eitherDecode payload of
+    Right (BookUpdateBatch (proposed :| []) (Just (expected :| []))) -> do
+      bookUpdateTitle proposed @?= "title"
+      bookUpdateTitle expected @?= " title "
+      bookUpdateAuthor expected @?= " author "
+      bookUpdateCategory expected @?= " category "
+      bookUpdateSeries expected @?= Just " series "
+      bookUpdateUrl expected @?= Just " url "
+      bookUpdateMemo expected @?= "  memo\n"
+    other -> assertFailure ("unexpected batch: " <> show other)
+ where
+  payload = "{\"books\":[{\"id\":1,\"title\":\" title \",\"author\":\"author\",\"status\":\"unread\",\"category\":\"category\"}],\"expected\":[{\"id\":1,\"title\":\" title \",\"author\":\" author \",\"status\":\"unread\",\"category\":\" category \",\"series\":\" series \",\"volumeNo\":null,\"memo\":\"  memo\\n\",\"url\":\" url \"}]}"
+
+testRejectIncompleteExpected :: IO ()
+testRejectIncompleteExpected = mapM_ rejects
+  [ "null"
+  , "[]"
+  , "[{\"id\":1,\"title\":\"title\",\"author\":\"author\",\"status\":\"unread\",\"category\":\"category\"}]"
+  ]
+ where
+  rejects expected =
+    case eitherDecode ("{\"books\":[{\"id\":1,\"title\":\"title\",\"author\":\"author\",\"status\":\"unread\",\"category\":\"category\"}],\"expected\":" <> expected <> "}") :: Either String BookUpdateBatch of
+      Left _ -> pure ()
+      Right decoded -> assertFailure ("unexpected batch: " <> show decoded)
 
 testRejectEmptyEditorBatch :: IO ()
 testRejectEmptyEditorBatch =

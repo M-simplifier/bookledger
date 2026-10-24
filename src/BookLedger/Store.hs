@@ -13,15 +13,19 @@ module BookLedger.Store
   , updateBookStatus
   , updateBookMemo
   , updateBooks
+  , updateBookBatch
+  , BookUpdateConflict(..)
   , listBooks
   , integrityCheck
   , vacuumInto
   ) where
 
 import BookLedger.Domain
-import Control.Exception (finally, throwIO)
+import Control.Exception (Exception(..), finally, throwIO)
 import Control.Monad (unless, when)
+import Data.List (nub, sort, sortOn)
 import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -82,11 +86,13 @@ bookColumns conn = do
   pure [name | (_, name, _, _, _, _) <- rows]
 
 addCategory :: Connection -> Text -> IO ()
-addCategory conn name =
+addCategory conn name = do
+  ensureRequired "category" name
   execute conn "INSERT INTO categories (name) VALUES (?)" (Only (T.strip name))
 
 renameCategory :: Connection -> Text -> Text -> IO ()
-renameCategory conn old new =
+renameCategory conn old new = do
+  ensureRequired "category" new
   execute conn "UPDATE categories SET name = ? WHERE name = ?" (T.strip new, T.strip old)
 
 listCategories :: Connection -> IO [Text]
@@ -95,11 +101,13 @@ listCategories conn = do
   pure (map fromOnly rows)
 
 addSeries :: Connection -> Text -> IO ()
-addSeries conn title =
+addSeries conn title = do
+  ensureRequired "series" title
   execute conn "INSERT INTO series (title) VALUES (?)" (Only (T.strip title))
 
 renameSeries :: Connection -> Text -> Text -> IO ()
-renameSeries conn old new =
+renameSeries conn old new = do
+  ensureRequired "series" new
   execute conn "UPDATE series SET title = ? WHERE title = ?" (T.strip new, T.strip old)
 
 listSeries :: Connection -> IO [Text]
@@ -109,6 +117,9 @@ listSeries conn = do
 
 insertBook :: Connection -> NewBook -> IO Int
 insertBook conn book = do
+  ensureRequired "title" (newTitle book)
+  ensureRequired "author" (newAuthor book)
+  ensureRequired "category" (newCategory book)
   ensureCategory conn (newCategory book)
   mapM_ (ensureSeries conn) (newSeries book)
   execute conn
@@ -137,24 +148,82 @@ updateBookMemo conn bookId memo =
     (memo, bookId)
 
 updateBooks :: Connection -> NonEmpty BookUpdate -> IO ()
-updateBooks conn updates =
-  withTransaction conn $ do
+updateBooks conn updates = updateBookBatch conn (BookUpdateBatch updates Nothing)
+
+data BookUpdateConflict = BookUpdateConflict
+  deriving (Eq, Show)
+
+instance Exception BookUpdateConflict where
+  displayException _ = "他の操作で本の情報が変更または削除されました。再読み込みして内容を確認してください。"
+
+updateBookBatch :: Connection -> BookUpdateBatch -> IO ()
+updateBookBatch conn batch =
+  withImmediateTransaction conn $ do
+    validateBatchIds batch
+    originals <- traverse loadOriginal updates
+    case batchExpectedBooks batch of
+      Nothing -> pure ()
+      Just expected ->
+        unless (and (zipWith matchesExpected (sortOn bookId (NE.toList originals)) (sortOn bookUpdateId (NE.toList expected)))) $
+          throwIO BookUpdateConflict
     mapM_ (validateBookUpdate conn) updates
-    mapM_ (updateBook conn) updates
+    mapM_ (\book -> execute conn "DELETE FROM books WHERE id = ?" (Only (bookId book))) originals
+    -- Keep the unique index active while freeing all edited identities for swaps.
+    mapM_ (uncurry (insertUpdatedBook conn)) (NE.zip originals updates)
+ where
+  updates = batchBookUpdates batch
+  loadOriginal proposed = do
+    rows <- query conn
+      "SELECT id, title, author, status, category, series, volume_no, memo, url, created_at, updated_at FROM books WHERE id = ?"
+      (Only (bookUpdateId proposed))
+    case rows of
+      [BookRow original] -> pure original
+      _ -> case batchExpectedBooks batch of
+        Just _ -> throwIO BookUpdateConflict
+        Nothing -> throwIO (userError ("unknown book id: " <> show (bookUpdateId proposed)))
+
+validateBatchIds :: BookUpdateBatch -> IO ()
+validateBatchIds batch = do
+  ensureUnique "books" updates
+  case batchExpectedBooks batch of
+    Nothing -> pure ()
+    Just expected -> do
+      ensureUnique "expected" expected
+      unless (sort (ids updates) == sort (ids expected)) $
+        throwIO (userError "expected must contain exactly the same book ids as books")
+ where
+  updates = batchBookUpdates batch
+  ids = map bookUpdateId . NE.toList
+  ensureUnique name books =
+    unless (length (ids books) == length (nub (ids books))) $
+      throwIO (userError (name <> " must contain each book id only once"))
+
+matchesExpected :: Book -> BookUpdate -> Bool
+matchesExpected original expected =
+  bookId original == bookUpdateId expected
+    && bookTitle original == bookUpdateTitle expected
+    && bookAuthor original == bookUpdateAuthor expected
+    && bookStatus original == bookUpdateStatus expected
+    && bookCategory original == bookUpdateCategory expected
+    && bookSeries original == bookUpdateSeries expected
+    && bookVolumeNo original == bookUpdateVolumeNo expected
+    && bookMemo original == bookUpdateMemo expected
+    && bookUrl original == bookUpdateUrl expected
 
 validateBookUpdate :: Connection -> BookUpdate -> IO ()
 validateBookUpdate conn book = do
-  ensureBookExists conn (bookUpdateId book)
   ensureRequired "title" (bookUpdateTitle book)
   ensureRequired "author" (bookUpdateAuthor book)
+  ensureRequired "category" (bookUpdateCategory book)
   ensureCategory conn (bookUpdateCategory book)
   mapM_ (ensureSeries conn) (bookUpdateSeries book)
 
-updateBook :: Connection -> BookUpdate -> IO ()
-updateBook conn book =
+insertUpdatedBook :: Connection -> Book -> BookUpdate -> IO ()
+insertUpdatedBook conn original book =
   execute conn
-    "UPDATE books SET title = ?, author = ?, status = ?, category = ?, series = ?, volume_no = ?, memo = ?, url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ( T.strip (bookUpdateTitle book)
+    "INSERT INTO books (id, title, author, status, category, series, volume_no, memo, url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)"
+    ( bookId original
+    , T.strip (bookUpdateTitle book)
     , T.strip (bookUpdateAuthor book)
     , statusText (bookUpdateStatus book)
     , T.strip (bookUpdateCategory book)
@@ -162,7 +231,7 @@ updateBook conn book =
     , bookUpdateVolumeNo book
     , bookUpdateMemo book
     , fmap T.strip (bookUpdateUrl book)
-    , bookUpdateId book
+    , bookCreatedAt original
     )
 
 listBooks :: Connection -> BookFilter -> IO [Book]
@@ -189,8 +258,8 @@ listBooks conn filters =
     ( "(title LIKE ? OR author LIKE ? OR memo LIKE ?)"
     , replicate 3 (SQLText ("%" <> value <> "%"))
     )
-  orderSql sort =
-    case sort of
+  orderSql sortOrder =
+    case sortOrder of
       SortActive -> " ORDER BY CASE status WHEN 'reading' THEN 0 WHEN 'unread' THEN 1 WHEN 'planned' THEN 2 WHEN 'finished' THEN 3 WHEN 'disposed' THEN 4 ELSE 5 END, updated_at DESC, id DESC"
       SortUpdated -> " ORDER BY updated_at DESC, id DESC"
       SortCatalog -> catalogOrderSql
@@ -217,17 +286,11 @@ ensureCategory conn category = do
 
 ensureSeries :: Connection -> Text -> IO ()
 ensureSeries conn seriesTitle = do
+  ensureRequired "series" seriesTitle
   rows <- query conn "SELECT 1 FROM series WHERE title = ? LIMIT 1" (Only (T.strip seriesTitle)) :: IO [Only Int]
   case rows of
     [_] -> pure ()
     _ -> throwIO (userError ("unknown series: " <> T.unpack seriesTitle))
-
-ensureBookExists :: Connection -> Int -> IO ()
-ensureBookExists conn bookId = do
-  rows <- query conn "SELECT 1 FROM books WHERE id = ? LIMIT 1" (Only bookId) :: IO [Only Int]
-  case rows of
-    [_] -> pure ()
-    _ -> throwIO (userError ("unknown book id: " <> show bookId))
 
 ensureRequired :: String -> Text -> IO ()
 ensureRequired fieldName value =

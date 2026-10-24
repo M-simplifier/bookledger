@@ -17,6 +17,8 @@ module BookLedger.Domain
   ) where
 
 import Data.Aeson (FromJSON(..), ToJSON(..), Value(String), object, withObject, withText, (.=), (.:), (.:?))
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Aeson.Types (Parser)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Text (Text)
@@ -185,16 +187,50 @@ instance FromJSON BookUpdate where
       , bookUpdateUrl = normalizeMaybe url
       }
 
-newtype BookUpdateBatch = BookUpdateBatch
+instance ToJSON BookUpdate where
+  toJSON book = object
+    [ "id" .= bookUpdateId book
+    , "title" .= bookUpdateTitle book
+    , "author" .= bookUpdateAuthor book
+    , "status" .= bookUpdateStatus book
+    , "category" .= bookUpdateCategory book
+    , "series" .= bookUpdateSeries book
+    , "volumeNo" .= bookUpdateVolumeNo book
+    , "memo" .= bookUpdateMemo book
+    , "url" .= bookUpdateUrl book
+    ]
+
+data BookUpdateBatch = BookUpdateBatch
   { batchBookUpdates :: NonEmpty BookUpdate
+  , batchExpectedBooks :: Maybe (NonEmpty BookUpdate)
   } deriving (Eq, Show, Generic)
 
 instance FromJSON BookUpdateBatch where
   parseJSON = withObject "BookUpdateBatch" $ \obj -> do
     updates <- obj .: "books"
-    case NE.nonEmpty updates of
-      Nothing -> fail "books must contain at least one update"
-      Just nonEmptyUpdates -> pure (BookUpdateBatch nonEmptyUpdates)
+    nonEmptyUpdates <- requireUpdates "books" updates
+    expected <- case KeyMap.lookup "expected" obj of
+      Nothing -> pure Nothing
+      Just value -> do
+        expectedValues <- parseJSON value
+        expectedBooks <- traverse parseExpectedBook expectedValues
+        Just <$> requireUpdates "expected" expectedBooks
+    pure (BookUpdateBatch nonEmptyUpdates expected)
+   where
+    requireUpdates name = maybe (fail (name <> " must contain at least one update")) pure . NE.nonEmpty
+
+parseExpectedBook :: Value -> Parser BookUpdate
+parseExpectedBook = withObject "ExpectedBook" $ \obj ->
+  BookUpdate
+    <$> obj .: "id"
+    <*> obj .: "title"
+    <*> obj .: "author"
+    <*> obj .: "status"
+    <*> obj .: "category"
+    <*> obj .: "series"
+    <*> obj .: "volumeNo"
+    <*> obj .: "memo"
+    <*> obj .: "url"
 
 data BookFilter = BookFilter
   { filterStatus :: Maybe Status

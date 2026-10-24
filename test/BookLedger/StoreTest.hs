@@ -5,11 +5,12 @@ module BookLedger.StoreTest (tests) where
 import BookLedger.Domain
 import qualified BookLedger.Store as Store
 import BookLedger.TestSupport
-import Data.List (sort)
+import Control.Exception (try)
+import Data.List (sort, sortOn)
 import Data.List.NonEmpty (NonEmpty((:|)))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.SQLite.Simple (Only(..), execute, execute_, query_)
+import Database.SQLite.Simple (Connection, Only(..), execute, execute_, query_)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertFailure, testCase, (@?=))
 
@@ -26,6 +27,13 @@ tests =
     , testCase "updates, filters, searches, and active ordering agree" testUpdatesAndFilters
     , testCase "batch update changes every editable book field" testBatchUpdateAllFields
     , testCase "batch update rolls back every book when one update fails" testBatchUpdateRollsBack
+    , testCase "batch identity swaps preserve ids, creation times, and untouched rows" testBatchIdentitySwap
+    , testCase "collision with an untouched book rolls back rows and the identity index" testUntouchedIdentityCollision
+    , testCase "duplicate or mismatched batch ids leave every book unchanged" testInvalidBatchIds
+    , testCase "every editable expected field detects a concurrent change" testExpectedFieldConflicts
+    , testCase "deletion of an expected book rejects the whole batch" testExpectedDeletionConflict
+    , testCase "expected rows ignore timestamps and accept any id order" testExpectedIgnoresTimestamps
+    , testCase "new and edited required names reject whitespace and preserve memo whitespace" testRequiredNames
     , testCase "migrates the legacy schema without losing books" testLegacyMigration
     ]
 
@@ -204,6 +212,163 @@ testBatchUpdateRollsBack =
       books <- Store.listBooks conn (allBooks SortCatalog)
       map bookTitle books @?= ["別の本", newTitle sampleBook]
       map bookMemo books @?= [newMemo sampleBook, newMemo sampleBook]
+
+testBatchIdentitySwap :: IO ()
+testBatchIdentitySwap =
+  withBatchBooks $ \conn first second untouched -> do
+    indexBefore <- identityIndex conn
+    let firstUpdate = (editableBook second) {bookUpdateId = bookId first}
+        secondUpdate = (editableBook first) {bookUpdateId = bookId second}
+    Store.updateBookBatch conn
+      (BookUpdateBatch (firstUpdate :| [secondUpdate]) (Just (editableBook second :| [editableBook first])))
+    after <- sortOn bookId <$> Store.listBooks conn (allBooks SortCatalog)
+    case after of
+      [firstAfter, secondAfter, untouchedAfter] -> do
+        editableBook firstAfter @?= firstUpdate
+        editableBook secondAfter @?= secondUpdate
+        bookCreatedAt firstAfter @?= bookCreatedAt first
+        bookCreatedAt secondAfter @?= bookCreatedAt second
+        assertBool "first updated_at should change" (bookUpdatedAt firstAfter /= bookUpdatedAt first)
+        assertBool "second updated_at should change" (bookUpdatedAt secondAfter /= bookUpdatedAt second)
+        untouchedAfter @?= untouched
+      _ -> assertFailure ("unexpected books after swap: " <> show after)
+    identityIndex conn >>= (@?= indexBefore)
+    assertThrows (Store.insertBook conn sampleBook)
+    Store.integrityCheck conn
+
+testUntouchedIdentityCollision :: IO ()
+testUntouchedIdentityCollision =
+  withBatchBooks $ \conn first second untouched -> do
+    before <- Store.listBooks conn (allBooks SortCatalog)
+    indexBefore <- identityIndex conn
+    let colliding = (editableBook untouched) {bookUpdateId = bookId second}
+    assertThrows (Store.updateBooks conn
+      ((editableBook first) {bookUpdateTitle = "書き換えない本"} :| [colliding]))
+    Store.listBooks conn (allBooks SortCatalog) >>= (@?= before)
+    identityIndex conn >>= (@?= indexBefore)
+    assertThrows (Store.insertBook conn sampleBook)
+    Store.integrityCheck conn
+
+testInvalidBatchIds :: IO ()
+testInvalidBatchIds =
+  withBatchBooks $ \conn first second _ -> do
+    before <- Store.listBooks conn (allBooks SortCatalog)
+    let firstUpdate = (editableBook first) {bookUpdateMemo = "保存しない"}
+        updates = firstUpdate :| [editableBook second]
+    assertThrows (Store.updateBooks conn (firstUpdate :| [firstUpdate]))
+    assertThrows (Store.updateBookBatch conn
+      (BookUpdateBatch updates (Just (editableBook first :| [editableBook first]))))
+    assertThrows (Store.updateBookBatch conn
+      (BookUpdateBatch updates (Just (editableBook first :| []))))
+    Store.listBooks conn (allBooks SortCatalog) >>= (@?= before)
+
+testExpectedFieldConflicts :: IO ()
+testExpectedFieldConflicts = mapM_ checkChange
+  [ \book -> book {bookUpdateTitle = "別のタイトル"}
+  , \book -> book {bookUpdateAuthor = "別の著者"}
+  , \book -> book {bookUpdateStatus = Finished}
+  , \book -> book {bookUpdateCategory = "一般書"}
+  , \book -> book {bookUpdateSeries = Just "岩波文庫"}
+  , \book -> book {bookUpdateVolumeNo = Just 3.5}
+  , \book -> book {bookUpdateMemo = "  メモの変更\n"}
+  , \book -> book {bookUpdateUrl = Just "https://example.com/changed"}
+  ]
+ where
+  checkChange change =
+    withBatchBooks $ \conn first second _ -> do
+      Store.updateBooks conn (change (editableBook first) :| [])
+      before <- Store.listBooks conn (allBooks SortCatalog)
+      assertConflict (Store.updateBookBatch conn
+        (BookUpdateBatch
+          ((editableBook second) {bookUpdateMemo = "保存しない"} :| [editableBook first])
+          (Just (editableBook second :| [editableBook first]))))
+      Store.listBooks conn (allBooks SortCatalog) >>= (@?= before)
+
+testExpectedDeletionConflict :: IO ()
+testExpectedDeletionConflict =
+  withBatchBooks $ \conn first second _ -> do
+    execute conn "DELETE FROM books WHERE id = ?" (Only (bookId second))
+    before <- Store.listBooks conn (allBooks SortCatalog)
+    assertConflict (Store.updateBookBatch conn
+      (BookUpdateBatch
+        ((editableBook first) {bookUpdateMemo = "保存しない"} :| [editableBook second])
+        (Just (editableBook first :| [editableBook second]))))
+    Store.listBooks conn (allBooks SortCatalog) >>= (@?= before)
+
+testExpectedIgnoresTimestamps :: IO ()
+testExpectedIgnoresTimestamps =
+  withBatchBooks $ \conn first second _ -> do
+    execute_ conn "UPDATE books SET updated_at = '2001-02-03 04:05:06'"
+    let firstUpdate = (editableBook first) {bookUpdateMemo = "  保持する空白\n"}
+    Store.updateBookBatch conn
+      (BookUpdateBatch (firstUpdate :| [editableBook second]) (Just (editableBook second :| [editableBook first])))
+    books <- Store.listBooks conn (allBooks SortCatalog)
+    map bookMemo (filter ((== bookId first) . bookId) books) @?= ["  保持する空白\n"]
+
+testRequiredNames :: IO ()
+testRequiredNames =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      let book = sampleBook {newSeries = Nothing, newVolumeNo = Nothing, newMemo = "  新規メモ\n"}
+      assertThrows (Store.insertBook conn book {newTitle = " \t\n"})
+      assertThrows (Store.insertBook conn book {newAuthor = " \t\n"})
+      assertThrows (Store.insertBook conn book {newCategory = " \t\n"})
+      assertThrows (Store.addCategory conn " \t\n")
+      assertThrows (Store.renameCategory conn "小説" " \t\n")
+      assertThrows (Store.addSeries conn " \t\n")
+      Store.addSeries conn "新潮文庫"
+      assertThrows (Store.renameSeries conn "新潮文庫" " \t\n")
+      _ <- Store.insertBook conn book
+      before <- Store.listBooks conn (allBooks SortCatalog)
+      case before of
+        [stored] -> do
+          bookMemo stored @?= "  新規メモ\n"
+          let proposed = editableBook stored
+          assertThrows (Store.updateBooks conn (proposed {bookUpdateTitle = " \t\n"} :| []))
+          assertThrows (Store.updateBooks conn (proposed {bookUpdateAuthor = " \t\n"} :| []))
+          assertThrows (Store.updateBooks conn (proposed {bookUpdateCategory = " \t\n"} :| []))
+          Store.listBooks conn (allBooks SortCatalog) >>= (@?= before)
+        _ -> assertFailure ("unexpected books: " <> show before)
+
+withBatchBooks :: (Connection -> Book -> Book -> Book -> IO ()) -> IO ()
+withBatchBooks action =
+  withTestConfig 2 $ \cfg ->
+    withInitializedConnection cfg $ \conn -> do
+      Store.addSeries conn "新潮文庫"
+      Store.addSeries conn "岩波文庫"
+      firstId <- Store.insertBook conn sampleBook
+      secondId <- Store.insertBook conn sampleBook
+        {newTitle = "別の本", newAuthor = "別の著者", newSeries = Just "岩波文庫", newVolumeNo = Just 2}
+      thirdId <- Store.insertBook conn sampleBook
+        {newTitle = "対象外の本", newSeries = Nothing, newVolumeNo = Nothing}
+      mapM_ (\identifier -> execute conn
+        "UPDATE books SET created_at = ?, updated_at = '2000-01-01 00:00:00' WHERE id = ?"
+        ("2000-01-0" <> T.pack (show identifier) <> " 00:00:00", identifier)) [firstId, secondId, thirdId]
+      books <- sortOn bookId <$> Store.listBooks conn (allBooks SortCatalog)
+      case books of
+        [first, second, third] -> action conn first second third
+        _ -> assertFailure ("unexpected fixture: " <> show books)
+
+editableBook :: Book -> BookUpdate
+editableBook book = BookUpdate
+  { bookUpdateId = bookId book
+  , bookUpdateTitle = bookTitle book
+  , bookUpdateAuthor = bookAuthor book
+  , bookUpdateStatus = bookStatus book
+  , bookUpdateCategory = bookCategory book
+  , bookUpdateSeries = bookSeries book
+  , bookUpdateVolumeNo = bookVolumeNo book
+  , bookUpdateMemo = bookMemo book
+  , bookUpdateUrl = bookUrl book
+  }
+
+identityIndex :: Connection -> IO [Only Text]
+identityIndex conn = query_ conn "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'books_identity_idx'"
+
+assertConflict :: IO () -> IO ()
+assertConflict action = do
+  result <- try action :: IO (Either Store.BookUpdateConflict ())
+  result @?= Left Store.BookUpdateConflict
 
 testLegacyMigration :: IO ()
 testLegacyMigration =
