@@ -2,7 +2,7 @@
 
 module BookLedger.WebTest (tests) where
 
-import BookLedger.Config (Config)
+import BookLedger.Config (Config(..))
 import BookLedger.Domain
 import qualified BookLedger.Store as Store
 import BookLedger.TestSupport
@@ -17,6 +17,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Database.SQLite.Simple (Only(..), execute)
 import qualified Network.HTTP.Types as HTTP
 import Network.HTTP.Types (ResponseHeaders, status200, status400, status409)
@@ -34,6 +35,7 @@ tests = testGroup "Web"
   , testCase "historical whitespace and legacy optional values can be compared" testHistoricalExpected
   , testCase "whitespace-only required names return 400" testBlankNamesResponse
   , testCase "HTML, CSS and every JavaScript module have revalidated content types" testStaticContentTypes
+  , testCase "a committed save reports automatic backup failure as a warning" testBackupWarningResponse
   ]
 
 testSuccessfulBatches :: IO ()
@@ -137,6 +139,23 @@ testStaticContentTypes =
         responseStatus response @?= status200
         lookup "content-type" (responseHeaders response) @?= Just contentType
         lookup "cache-control" (responseHeaders response) @?= Just "no-cache"
+
+testBackupWarningResponse :: IO ()
+testBackupWarningResponse =
+  withWebBook $ \base original -> do
+    let cfg = base {cfgBackupAfterWrite = True}
+    TIO.writeFile (cfgBackupDir cfg) "blocked destination"
+    response <- requestApp cfg "POST" ["api", "books", "batch"]
+      (object ["books" .= [original {bookMemo = "保存済み"}], "expected" .= [original]])
+    responseStatus response @?= status200
+    expectField response "ok" (Bool True)
+    case decodeBody response of
+      Right (Object fields) -> case KeyMap.lookup "warning" fields of
+        Just (String warning) -> assertBool "warning should explain backup failure" ("backup failed:" `T.isPrefixOf` warning)
+        other -> assertFailure ("backup failure was not reported: " <> show other)
+      other -> assertFailure ("invalid response: " <> show other)
+    saved <- readOnlyBook cfg
+    bookMemo saved @?= "保存済み"
 
 withWebBook :: (Config -> Book -> IO ()) -> IO ()
 withWebBook action =

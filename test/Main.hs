@@ -1,6 +1,7 @@
 module Main (main) where
 
 import qualified BookLedger.BackupTest as BackupTest
+import qualified BookLedger.ActionsTest as ActionsTest
 import qualified BookLedger.DomainTest as DomainTest
 import qualified BookLedger.ExportTest as ExportTest
 import qualified BookLedger.StoreTest as StoreTest
@@ -15,6 +16,7 @@ main =
         [ DomainTest.tests
         , StoreTest.tests
         , BackupTest.tests
+        , ActionsTest.tests
         , ExportTest.tests
         , WebTest.tests
         ]

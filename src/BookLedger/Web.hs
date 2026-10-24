@@ -3,6 +3,8 @@
 
 module BookLedger.Web
   ( runWeb
+  , runWebWith
+  , BrowserLaunch(..)
   , bookledgerApp
   ) where
 
@@ -44,11 +46,19 @@ instance FromJSON MemoUpdate where
   parseJSON = withObject "MemoUpdate" $ \obj ->
     MemoUpdate <$> obj .: "id" <*> obj .: "memo"
 
+data BrowserLaunch = OpenBrowser | LeaveBrowserClosed
+  deriving (Eq, Show)
+
 runWeb :: Config -> Int -> IO ()
-runWeb cfg port = do
+runWeb = runWebWith OpenBrowser
+
+runWebWith :: BrowserLaunch -> Config -> Int -> IO ()
+runWebWith browserLaunch cfg port = do
   let url = "http://127.0.0.1:" <> show port <> "/"
   putStrLn ("Bookledger web UI: " <> url)
-  openBrowser url
+  case browserLaunch of
+    OpenBrowser -> openBrowser url
+    LeaveBrowserClosed -> pure ()
   runSettings (setHost "127.0.0.1" (setPort port defaultSettings)) (bookledgerApp cfg)
 
 bookledgerApp :: Config -> Application

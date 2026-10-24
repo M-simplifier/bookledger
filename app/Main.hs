@@ -6,7 +6,7 @@ import BookLedger.Actions
 import BookLedger.Backup (BackupResult(..), listBackups)
 import BookLedger.Config
 import BookLedger.Domain
-import BookLedger.Web (runWeb)
+import BookLedger.Web (BrowserLaunch(..), runWebWith)
 import Data.Foldable (for_)
 import qualified Data.Text as T
 import Options.Applicative
@@ -24,7 +24,7 @@ data Command
   | SeriesList
   | Backup
   | Backups
-  | Web Int
+  | Web Int BrowserLaunch
 
 data AddOptions = AddOptions
   { addTitle :: String
@@ -95,8 +95,8 @@ runCommand cfg selectedCommand =
       putStrLn ("html: " <> backupHtmlPath result)
     Backups ->
       listBackups cfg >>= mapM_ putStrLn
-    Web port ->
-      runWeb cfg port
+    Web port browserLaunch ->
+      runWebWith browserLaunch cfg port
 
 parserInfo :: ParserInfo Command
 parserInfo =
@@ -116,7 +116,7 @@ commandParser =
     <> command "series" (info seriesParser (progDesc "Manage series"))
     <> command "backup" (info (pure Backup) (progDesc "Create a SQLite snapshot backup"))
     <> command "backups" (info (pure Backups) (progDesc "List snapshot backups"))
-    <> command "web" (info (Web <$> portOption) (progDesc "Run the local web UI"))
+    <> command "web" (info (Web <$> portOption <*> browserLaunchOption) (progDesc "Run the local web UI"))
     )
 
 addOptions :: Parser AddOptions
@@ -164,6 +164,10 @@ seriesParser =
 portOption :: Parser Int
 portOption =
   option auto (long "port" <> value 8765 <> showDefault <> metavar "PORT")
+
+browserLaunchOption :: Parser BrowserLaunch
+browserLaunchOption =
+  flag OpenBrowser LeaveBrowserClosed (long "no-open" <> help "Run without opening a browser")
 
 statusReader :: ReadM Status
 statusReader =

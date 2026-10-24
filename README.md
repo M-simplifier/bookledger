@@ -40,7 +40,9 @@ CLI listings use plain text.
 
 ## Web UI
 
-Run `books web` to open the local UI.
+Run `books web` to open the local UI. Use `books web --no-open` to start the
+server without launching a browser; this keeps the normal environment available
+for backup commands.
 
 - The sidebar opens one collection at a time. Selecting `未読` opens all unread
   books, even if a category or series was selected before it.
@@ -68,11 +70,30 @@ cannot be confirmed, refresh the list before retrying.
 
 ## Backups and configuration
 
-Backups write `latest.sqlite`, timestamped SQLite snapshots, and refreshed
-`latest.csv` / `latest.html` read-only exports in the backup directory.
+With `backup_after_write = true`, successful CLI and web changes also attempt a
+backup. `books backup` creates one on demand. SQLite, CSV, and HTML are generated
+from the same checked database snapshot.
 
-Config is read from `~/.config/bookledger/config.toml`.
-See `example-config.toml` for the SQLite and backup paths.
+The backup directory contains `latest.sqlite`, dated SQLite files in
+`snapshots/`, and `latest.csv` / `latest.html`. A dated snapshot is written before
+the latest files are replaced, and `latest.sqlite` is replaced after the exports.
+Retention applies only to the tool's dated snapshots. If a backup fails, the
+book change remains saved and a warning is shown; retry with `books backup`.
+
+`latest.html` is a single-file, read-only view for use away from the local app.
+It follows the same collection navigation, search, filters, and sorting, with
+book details and saved links. Its snapshot time is shown, and the saved file
+works offline in a browser without companion assets. It does not write changes
+back to the ledger.
+
+To verify a restore, copy a SQLite backup to a separate local file and point a
+temporary configuration's `db_path` at that copy. Run `books list` with
+`BOOKLEDGER_CONFIG` set to the temporary configuration. Keep the current ledger
+until the restored copy has been checked.
+
+Config is read from `~/.config/bookledger/config.toml`; `BOOKLEDGER_CONFIG` can
+select another configuration file. See `example-config.toml` for the database,
+backup path, retention, and automatic-backup settings.
 
 ## Tests
 

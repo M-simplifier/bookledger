@@ -21,7 +21,7 @@ import BookLedger.Backup (BackupResult, backupNow)
 import BookLedger.Config
 import BookLedger.Domain
 import qualified BookLedger.Store as Store
-import Control.Exception (SomeException, bracket, try)
+import Control.Exception (SomeAsyncException, SomeException, bracket, displayException, fromException, throwIO, try)
 import Data.List.NonEmpty (NonEmpty)
 import Database.SQLite.Simple (close)
 import qualified Database.SQLite.Simple
@@ -109,7 +109,9 @@ backupAfterWrite cfg
       result <- try (backupNow cfg) :: IO (Either SomeException BackupResult)
       case result of
         Right _ -> pure Nothing
-        Left err -> pure (Just ("backup failed: " <> show err))
+        Left err -> case fromException err :: Maybe SomeAsyncException of
+          Just async -> throwIO async
+          Nothing -> pure (Just ("backup failed: " <> displayException err))
 
 fromStringText :: String -> Data.Text.Text
 fromStringText = Data.Text.pack
